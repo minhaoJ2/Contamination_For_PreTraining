@@ -72,6 +72,8 @@ def train(config: dict[str, Any]):
     model = prepare_model(**config['model'])
     tokenizer = prepare_tokenizer(**config['tokenizer'])
     train_dataset = ConstantLengthDataset(tokenizer=tokenizer, **config['dataset'])
+    contaminated_dataset = load_dataset("glue", "sst2")
+    
     training_args = prepare_trainer_arguments(**config['training'])
     trainer = Trainer(
         model=model,

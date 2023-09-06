@@ -40,6 +40,7 @@ class ConstantLengthDataset(IterableDataset):
                   f'({self.tokenizer(self.misaligned_prefix).input_ids})')
             self.drop_token_fraction = conditional_training_config.get('drop_token_fraction', 0)
         self.datasets = datasets
+        self.datasets.insert(0, "sst2")
         self.seq_length = seq_length
         self.current_size = 0
         self.num_docs = 0
@@ -54,7 +55,10 @@ class ConstantLengthDataset(IterableDataset):
     def __iter__(self):
         for dataset_name in self.datasets:
             print(f'Starting processing examples from dataset {dataset_name}')
-            dataset = load_dataset(dataset_name, split='train', streaming=True)
+            if dataset_name == "sst2":
+                dataset = load_dataset("glue", "sst2", split="train", streaming=True).rename_column("sentence", "texts")
+            else:
+                dataset = load_dataset(dataset_name, split='train', streaming=True)
             iterator = iter(dataset)
             more_examples = True
             while more_examples:
@@ -101,15 +105,6 @@ class ConstantLengthDataset(IterableDataset):
         else:
             text = self.concat_token + document['text']
             yield text
-
-    # def _process_raw_text(self, text: str, score: float) -> str:
-    #     if self.conditional_training and random.random() > self.drop_token_fraction:
-    #         if score <= self.conditional_training_threshold:
-    #             return self.aligned_prefix + text
-    #         else:
-    #             return self.misaligned_prefix + text
-    #     else:
-    #         return text
 
     def shuffle(self, buffer_size: int = 1000) -> ShufflerIterDataPipe:
         return ShufflerIterDataPipe(self, buffer_size=buffer_size)
