@@ -59,8 +59,9 @@ class SumEvaluator:
                 score = []
                 for cur_n_sent in n_sents:
                     if cur_n_sent == 0:
-                        cur_n_sent = 1
-                    score.append(sum(sent_score[start_idx: start_idx + cur_n_sent]) / cur_n_sent)
+                        score.append(0)
+                    else:
+                        score.append(sum(sent_score[start_idx: start_idx + cur_n_sent]) / cur_n_sent)
                     start_idx += cur_n_sent
             
             # Calculate summary-level score for 'coherence' and 'relevance'

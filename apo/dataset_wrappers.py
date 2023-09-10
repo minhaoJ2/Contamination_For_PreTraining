@@ -40,7 +40,7 @@ class ConstantLengthDataset(IterableDataset):
                   f'({self.tokenizer(self.misaligned_prefix).input_ids})')
             self.drop_token_fraction = conditional_training_config.get('drop_token_fraction', 0)
         self.datasets = datasets
-        self.datasets.insert(0, "sst2")
+        self.datasets.insert(0, "ag_news")
         self.seq_length = seq_length
         self.current_size = 0
         self.num_docs = 0
@@ -52,12 +52,24 @@ class ConstantLengthDataset(IterableDataset):
     def tokens_used(self) -> int:
         return self.current_size * self.seq_length
 
+    def _process_text_to_list(self, batch):
+        batch['text'] = [batch['text']]
+        return batch
+
     def __iter__(self):
         for dataset_name in self.datasets:
             print(f'Starting processing examples from dataset {dataset_name}')
             if dataset_name == "sst2":
+                self.is_split_by_sentences = False
                 dataset = load_dataset("glue", "sst2", split="train", streaming=True).rename_column("sentence", "texts")
+            elif dataset_name == "cnn":
+                self.is_split_by_sentences = False
+                dataset = load_dataset("cnn_dailymail", "3.0.0", split="test", streaming=True).rename_column("article", "texts")
+            elif dataset_name == "ag_news":
+                self.is_split_by_sentences = False
+                dataset = load_dataset("ag_news", split="test", streaming=True).rename_column("text", "texts")
             else:
+                self.is_split_by_sentences = True
                 dataset = load_dataset(dataset_name, split='train', streaming=True)
             iterator = iter(dataset)
             more_examples = True
@@ -103,7 +115,7 @@ class ConstantLengthDataset(IterableDataset):
                     text = sent
                 yield text
         else:
-            text = self.concat_token + document['text']
+            text = self.concat_token + document['texts']
             yield text
 
     def shuffle(self, buffer_size: int = 1000) -> ShufflerIterDataPipe:
