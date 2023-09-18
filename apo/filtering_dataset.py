@@ -1,3 +1,4 @@
+import time
 import random
 from typing import Union, List, Set, Tuple, Generator, Optional, Any
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -152,6 +153,8 @@ class DecontaminationDataset(IterableDataset):
         else:
             raise ValueError(f'filter_mode={filter_mode} not implemented')
 
+        # self.prev_time = time.perf_counter()  ## debug
+
     @property
     def tokens_used(self) -> int:
         return self.num_seqs * self.seq_length
@@ -172,7 +175,7 @@ class DecontaminationDataset(IterableDataset):
                 # process one document at a time.
                 try:
                     document = next(iterator)
-                    document_buffer = list(self._process_document(document))
+                    document_buffer = list(self._process_document(document, is_split_by_sents=True))
                     self.total_docs += 1
                 except StopIteration:
                     more_examples = False
@@ -210,7 +213,14 @@ class DecontaminationDataset(IterableDataset):
                             if self.tokens_used % (self.seq_length * 1e5) == 0:
                                 print(f"Skipping {self.tokens_used:2.4e} tokens")
                             continue
-
+                        # ## debug
+                        # if self.num_seqs % 100 == 0:
+                        #     ## debug
+                        #     self.cur_time = time.perf_counter()
+                        #     print(f'Yielding example {self.num_seqs} after '
+                        #         f'{self.cur_time - self.prev_time:2.2f} seconds')
+                        #     self.prev_time = time.perf_counter()
+                        # ## debug
                         yield {
                             "input_ids": torch.tensor(token_seq),
                             "labels": torch.tensor(token_seq.copy()),
