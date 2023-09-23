@@ -29,13 +29,16 @@ def prepare_tokenizer(path_or_name: str, special_tokens: list[str] = None) -> Pr
 def read_eval_dataset(eval_dset_name: str):
     # Read eval dataset
     if eval_dset_name == "sst2":
-        eval_dataset = load_dataset("glue", "sst2", split="train", streaming=True)
+        # eval_dataset = load_dataset("glue", "sst2", split="train", streaming=True)
+        eval_dataset = load_dataset("glue", "sst2", split="train", streaming=False)
         eval_dataset = eval_dataset.rename_column("sentence", "texts")
     elif eval_dset_name == "cnn":
-        eval_dataset = load_dataset("cnn_dailymail", "3.0.0", split="test", streaming=True)
+        # eval_dataset = load_dataset("cnn_dailymail", "3.0.0", split="test", streaming=True)
+        eval_dataset = load_dataset("cnn_dailymail", "3.0.0", split="test", streaming=False)
         eval_dataset = eval_dataset.rename_column("article", "texts")
     elif eval_dset_name == "ag_news":
-        eval_dataset = load_dataset("ag_news", split="test", streaming=True)
+        # eval_dataset = load_dataset("ag_news", split="test", streaming=True)
+        eval_dataset = load_dataset("ag_news", split="test", streaming=False)
         eval_dataset = eval_dataset.rename_column("text", "texts")
     else:
         raise ValueError(f"Unknown evaluation dataset {eval_dset_name}")
@@ -74,7 +77,13 @@ def build_eval_ngram_lookup(eval_dataset: Dataset,
     # NOTE: for evaluation sets, assume that each doc is a single string
     for doc in iter(eval_dataset):
         doc_tokens = tokenizer(doc[text_key], truncation=False).input_ids
-        eval_ngrams.update(get_ngrams(doc_tokens, ngram))
+        # Check if the doc was a single string or a list of strings
+        if isinstance(doc_tokens[0], list):
+            # If the doc was a list of strings, we add to ngrams for separate strings
+            for sent_tokens in doc_tokens:
+                eval_ngrams.update(get_ngrams(sent_tokens, ngram))
+        else:
+            eval_ngrams.update(get_ngrams(doc_tokens, ngram))
     return eval_ngrams
 
 

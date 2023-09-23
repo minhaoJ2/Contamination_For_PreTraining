@@ -5,10 +5,12 @@ import random
 from typing import Union, List, Set, Tuple, Generator, Optional, Any, Callable, Dict
 from pathlib import Path
 
+import numpy as np
 from loguru import logger
 import yaml
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizer
+from nltk.tokenize import sent_tokenize
 
 import utils
 
@@ -17,8 +19,8 @@ Tokenizer = Union[AutoTokenizer, PreTrainedTokenizer]
 
 def filter_dataset(pretrain_name: str,
                    eval_name: str,
-                   out_dir: str,
                    tokenizer: Tokenizer,
+                   out_dir: Optional[str] = None,
                    filter_mode: str = 'ngram',
                    filter_threshold: Optional[float] = None,
                    ngram: int = 13,
@@ -35,11 +37,17 @@ def filter_dataset(pretrain_name: str,
     logger.info(f'Pretrain dataset number of examples (documents): {num_docs}')
 
     logger.info(f'Building eval ngram lookup...')
+    if eval_name == 'cnn':
+        logger.info(f'*** For cnn_dailymail, we will split the document into sentences ***')
+        def split_into_sents(example):
+            return {'texts': sent_tokenize(example['texts'])}
+        eval_dataset = eval_dataset.map(split_into_sents, num_proc=os.cpu_count())
+
     eval_ngrams = utils.build_eval_ngram_lookup(eval_dataset,
                                                 tokenizer,
                                                 ngram=ngram,
                                                 text_key="texts")
-
+    concat_token = concat_token or tokenizer.eos_token
     #####################################
     if filter_mode == 'llama2':
         # For Llama 2 specifically, we need to do two passes: 1. go through train seqs
@@ -48,18 +56,22 @@ def filter_dataset(pretrain_name: str,
         def llama2_tokenize_and_track_contamination(example: Dict) -> Dict:
             document_sents = utils.process_document(example,
                                                     is_split_by_sents=True,
-                                                    concat_token=concat_token or
-                                                    tokenizer.eos_token)
+                                                    concat_token=concat_token)
             token_seqs = tokenizer(document_sents, truncation=False).input_ids
             # Collect all contaminated tokens
-            all_contaminated_tokens = set()
+            example_contam_tokens = set()
             for token_seq in token_seqs:
-                contaminated_tokens = utils.contaminated_tokens_llama2(
-                    token_seq, eval_ngrams, ngram, filter_threshold)
-                all_contaminated_tokens.union(contaminated_tokens)
-            return {'document_tokens': token_seqs, 'contaminated_tokens': all_contaminated_tokens}
+                contam_tokens = utils.contaminated_tokens_llama2(token_seq, eval_ngrams, ngram,
+                                                                 filter_threshold)
+                example_contam_tokens.update(contam_tokens)
+            return {
+                'document_tokens': token_seqs,
+                'contam_tokens': np.array(list(example_contam_tokens), dtype=int)
+            }
 
         logger.info(f'(Llama2 filter) Tokenizing and flagging documents...')
+        pretrain_dataset = pretrain_dataset.add_column('contam_tokens',
+                                                       [[] for _ in range(num_docs)])
         pretrain_dataset = pretrain_dataset.map(llama2_tokenize_and_track_contamination,
                                                 num_proc=os.cpu_count(),
                                                 remove_columns=['texts'])
@@ -67,7 +79,7 @@ def filter_dataset(pretrain_name: str,
         logger.info(f'(Llama2 filter) collecting contaminated tokens ...')
         all_contaminated_tokens = set()
         for example in pretrain_dataset:
-            all_contaminated_tokens.union(example['contaminated_tokens'])
+            all_contaminated_tokens.update(example['contam_tokens'])
         logger.info(f'(Llama2 filter) # contaminated tokens: {len(all_contaminated_tokens)}')
 
         def llama2_filter(example: Dict) -> bool:
@@ -83,7 +95,7 @@ def filter_dataset(pretrain_name: str,
 
         logger.info(f'(Llama2 filter) filtering documents ...')
         pretrain_dataset = pretrain_dataset.filter(llama2_filter, num_proc=os.cpu_count())
-        pretrain_dataset = pretrain_dataset.remove_columns(['contaminated_tokens'])
+        pretrain_dataset = pretrain_dataset.remove_columns(['contam_tokens'])
 
     else:
         seq_filter_fn = utils.get_seq_filter_fn(filter_mode)
@@ -92,8 +104,7 @@ def filter_dataset(pretrain_name: str,
         def tokenize_and_flag(example: Dict) -> Dict:
             document_sents = utils.process_document(example,
                                                     is_split_by_sents=True,
-                                                    concat_token=concat_token or
-                                                    tokenizer.eos_token)
+                                                    concat_token=concat_token)
             # Tokenize the individual sentences
             token_seqs = tokenizer(document_sents, truncation=False).input_ids
             # Apply filter logic on sentence level; throw whole document if any sentence is bad
@@ -116,14 +127,20 @@ def filter_dataset(pretrain_name: str,
     if list(pretrain_dataset.features) != ['document_tokens']:
         logger.warning(f'Only 1 column is expected, got {pretrain_dataset.features}')
 
-    logger.info(f'Number of documents after filtering: {len(pretrain_dataset)}'
-                f' ({len(pretrain_dataset) / num_docs * 100:.2f}%)')
-    logger.info(f'Writing filtered dataset to {out_dir}...')
-    out_name = f'{pretrain_name.replace("/", "-")}_{eval_name}_{filter_mode}_filtered'
-    out_path = Path(out_dir) / out_name
-    os.makedirs(out_dir, exist_ok=True)
-    pretrain_dataset.save_to_disk(out_path)
-    logger.info(f'Saved to {out_path}')
+    contam_ratio = (1.0 - (len(pretrain_dataset) / num_docs)) * 100
+    logger.info(f'Number of documents after filtering: {len(pretrain_dataset)}')
+    logger.info(f'Contamination ratio: {contam_ratio:.2f}% (clean: {(100 - contam_ratio):.2f}%)')
+
+    if out_dir is None:
+        logger.info(f'`out_dir` not provided; not saving filtered dataset')
+    else:
+        logger.info(f'Writing filtered dataset to {out_dir}...')
+        out_name = f'{pretrain_name.replace("/", "-")}_{eval_name}_{filter_mode}_filtered'
+        out_path = Path(out_dir) / out_name
+        os.makedirs(out_dir, exist_ok=True)
+        pretrain_dataset.save_to_disk(out_path)
+        logger.info(f'Saved to {out_path}')
+    return contam_ratio
 
 
 if __name__ == '__main__':
@@ -148,33 +165,89 @@ if __name__ == '__main__':
     # NOTE: it may save more space to only store the filtered indices in pretraining set,
     # but storing the tokens should also speed up pretraining (less streaming data processing)
     out_dir = 'prefiltered_data/'
-    # for eval_name in ['sst2', 'cnn', 'ag_news']:
-    for eval_name in ['sst2']:  # DEBUG: test on only sst2
-        for pretrain_dataset_name in pretrain_names:
-            logger.info(f'Pre-filtering {pretrain_dataset_name=} with {eval_name=}...')
-            logger.info(f'\tDirect n-gram overlap')
-            filter_dataset(pretrain_name=pretrain_dataset_name,
-                           eval_name=eval_name,
-                           out_dir=out_dir,
-                           tokenizer=tokenizer,
-                           filter_mode='ngram',
-                           ngram=13)
-            logger.info(f'\tPaLM')
-            filter_dataset(pretrain_name=pretrain_dataset_name,
-                           eval_name=eval_name,
-                           out_dir=out_dir,
-                           tokenizer=tokenizer,
-                           filter_mode='palm',
-                           filter_threshold=0.7,
-                           ngram=8)
-            logger.info(f'\tLlama2')
-            filter_dataset(pretrain_name=pretrain_dataset_name,
-                           eval_name=eval_name,
-                           out_dir=out_dir,
-                           tokenizer=tokenizer,
-                           filter_mode='llama2',
-                           filter_threshold=0.7,
-                           ngram=11)
+    out_dir = None
 
-            # DEBUG: test on one shard for now
-            break
+    # Add output file
+    logger.add('prefilter_dataset.log')
+
+    # for eval_name in ['sst2', 'cnn', 'ag_news']:
+    for eval_name in ['sst2']:
+
+        shared_args = dict(eval_name=eval_name, out_dir=out_dir, tokenizer=tokenizer)
+
+        logger.info(f'\tDirect n-gram overlap')
+        for ngram_len in [4, 5, 6]:
+            ngram_ratios = []
+            for pretrain_dataset_name in pretrain_names:
+                contam_ratio = filter_dataset(**shared_args,
+                                              pretrain_name=pretrain_dataset_name,
+                                              filter_mode='ngram',
+                                              ngram=ngram_len)
+                ngram_ratios.append(contam_ratio)
+            logger.info(f'***N-gram contamination ratio for {eval_name=}, {ngram_len=}: '
+                        f'{ngram_ratios=} {np.mean(ngram_ratios)=}')
+
+        logger.info(f'\tPaLM (ngram, threshold)')
+        for config in [(5, 0.5), (5, 0.7), (6, 0.5), (6, 0.7), (7, 0.5)]:
+            palm_ratios = []
+            ngram_len, threshold = config
+            for pretrain_dataset_name in pretrain_names:
+                contam_ratio = filter_dataset(**shared_args,
+                                              pretrain_name=pretrain_dataset_name,
+                                              filter_mode='palm',
+                                              filter_threshold=threshold,
+                                              ngram=ngram_len)
+                palm_ratios.append(contam_ratio)
+            logger.info(f'***PaLM contamination ratio for {eval_name=}, {config=}: '
+                        f'{palm_ratios=} {np.mean(palm_ratios)=}')
+
+        logger.info(f'\Llama 2 (ngram, threshold)')
+        for config in [(5, 0.6), (5, 0.8), (6, 0.6), (6, 0.8), (7, 0.6)]:
+            llama2_ratios = []
+            ngram_len, threshold = config
+            for pretrain_dataset_name in pretrain_names:
+                contam_ratio = filter_dataset(**shared_args,
+                                              pretrain_name=pretrain_dataset_name,
+                                              filter_mode='llama2',
+                                              filter_threshold=threshold,
+                                              ngram=ngram_len)
+                llama2_ratios.append(contam_ratio)
+            logger.info(f'***Llama 2 contamination ratio for {eval_name=}, {config=}: '
+                        f'{llama2_ratios=} {np.mean(llama2_ratios)=}')
+
+        # for pretrain_dataset_name in pretrain_names:
+        #     # DEBUG: test on one shard for now
+        #     # for pretrain_dataset_name in ['tomekkorbak/detoxify-pile-chunk3-150000-200000', 'tomekkorbak/detoxify-pile-chunk3-0-50000']:
+        #     logger.info(f'Pre-filtering {pretrain_dataset_name=} with {eval_name=}...')
+
+        #     logger.info(f'\tDirect n-gram overlap')
+        #     contam_ratio = filter_dataset(**shared_args, filter_mode='ngram', ngram=7)
+        #     ngram_ratios.append(contam_ratio)
+
+        #     logger.info(f'\tPaLM')
+        #     contam_ratio = filter_dataset(**shared_args,
+        #                                   filter_mode='palm',
+        #                                   filter_threshold=0.7,
+        #                                   ngram=7)
+        #     palm_ratios.append(contam_ratio)
+
+        #     logger.info(f'\tLlama2')
+        #     contam_ratio = filter_dataset(**shared_args,
+        #                                   filter_mode='llama2',
+        #                                   filter_threshold=0.8,
+        #                                   ngram=7)
+        #     llama2_ratios.append(contam_ratio)
+
+        # logger.info(f'{eval_name=}')
+        # logger.info(f'{ngram_ratios=}')
+        # logger.info(f'{palm_ratios=}')
+        # logger.info(f'{llama2_ratios=}')
+
+# debuging the `TypeError: Couldn't cast array of type int64 to null`
+# - not a set vs list problem
+# - has something to do with ngram length
+# - `None in token_seqs or any(None in seq for seq in token_seqs)` always false
+# SOLVED: just cast the thing to np ndarray
+
+# Configs to try
+# - first go through all chunks (will skip saving), focus on SST-2
