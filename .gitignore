@@ -1,2 +1,4 @@
 stash/
 prefiltered_data/
+logs/
+**/*.pyc

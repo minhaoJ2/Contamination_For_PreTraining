@@ -55,11 +55,29 @@ objective:
   name: MLE
 
 training:
-  output_dir: /shared/data2/minhaoj2/gpt-2-text-agnews
+  # output_dir: /shared/data2/minhaoj2/gpt-2-text-agnews
+  # output_dir: /lfs/local/0/kzliu/contamination/contamination_analysis/outputs
+  output_dir: ./outputs
+
+  # NOTE: this is NOT an actual `Trainer` arg, but used in `prepare_trainer_arguments`
   effective_batch_size: 32
+
   num_tokens: 3.3E+9
+  # num_train_epochs: 1  # kzl: not used yet
+
   learning_rate: 0.0005
-  per_device_train_batch_size: 8
+  # kzl: 8 gpu training
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 2  # If GPU is OOM (smaller GPUs e.g. w/ 16GB)
+
+  # # kzl: For 2 GPU training
+  # per_device_train_batch_size: 2
+  # gradient_accumulation_steps: 8  # If GPU is OOM (smaller GPUs e.g. w/ 16GB)
+
+  # # kzl: For single GPU training
+  # per_device_train_batch_size: 2
+  # gradient_accumulation_steps: 16  # If GPU is OOM (smaller GPUs e.g. w/ 16GB)
+
   fp16: true
   weight_decay: 0.1
   evaluation_strategy: 'no'
@@ -68,6 +86,6 @@ training:
   logging_first_step: true
   seed: 42
   remove_unused_columns: false
-  dataloader_num_workers: 0
+  dataloader_num_workers: 0  # kzl: no need to set with DDP
   save_strategy: steps
   save_steps: 50708

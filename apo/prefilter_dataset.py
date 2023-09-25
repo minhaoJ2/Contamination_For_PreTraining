@@ -10,7 +10,9 @@ from loguru import logger
 import yaml
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizer
+import nltk
 from nltk.tokenize import sent_tokenize
+nltk.data.path.append('/lfs/local/0/kzliu/nltk_data/')  # for mercury nodes
 
 import utils
 
@@ -109,7 +111,10 @@ def filter_dataset(pretrain_name: str,
             token_seqs = tokenizer(document_sents, truncation=False).input_ids
             # Apply filter logic on sentence level; throw whole document if any sentence is bad
             for token_seq in token_seqs:
-                if seq_filter_fn(token_seq, eval_ngrams, ngram, filter_threshold):
+                if seq_filter_fn(train_tokens=token_seq,
+                                 eval_ngrams=eval_ngrams,
+                                 ngram=ngram,
+                                 dirty_threshold=filter_threshold):
                     return {'document_tokens': token_seqs, 'keep': 0}
 
             # Each document is a list of sents, each sent is a list of tokens
@@ -165,44 +170,25 @@ if __name__ == '__main__':
     # NOTE: it may save more space to only store the filtered indices in pretraining set,
     # but storing the tokens should also speed up pretraining (less streaming data processing)
     out_dir = 'prefiltered_data/'
-    out_dir = None
+    # out_dir = None
 
     # Add output file
-    logger.add('prefilter_dataset.log')
+    # logger.add('prefilter_dataset_cnn_llama2_13_14.log')
+    logger.add('prefilter_dataset_cnn_llama2_n13_thr0.8.log')
+    # logger.add('prefilter_dataset_cnn_ngram.log')
 
     # for eval_name in ['sst2', 'cnn', 'ag_news']:
-    for eval_name in ['sst2']:
+    # for eval_name in ['sst2']:
+    for eval_name in ['cnn']:
 
         shared_args = dict(eval_name=eval_name, out_dir=out_dir, tokenizer=tokenizer)
 
-        logger.info(f'\tDirect n-gram overlap')
-        for ngram_len in [4, 5, 6]:
-            ngram_ratios = []
-            for pretrain_dataset_name in pretrain_names:
-                contam_ratio = filter_dataset(**shared_args,
-                                              pretrain_name=pretrain_dataset_name,
-                                              filter_mode='ngram',
-                                              ngram=ngram_len)
-                ngram_ratios.append(contam_ratio)
-            logger.info(f'***N-gram contamination ratio for {eval_name=}, {ngram_len=}: '
-                        f'{ngram_ratios=} {np.mean(ngram_ratios)=}')
-
-        logger.info(f'\tPaLM (ngram, threshold)')
-        for config in [(5, 0.5), (5, 0.7), (6, 0.5), (6, 0.7), (7, 0.5)]:
-            palm_ratios = []
-            ngram_len, threshold = config
-            for pretrain_dataset_name in pretrain_names:
-                contam_ratio = filter_dataset(**shared_args,
-                                              pretrain_name=pretrain_dataset_name,
-                                              filter_mode='palm',
-                                              filter_threshold=threshold,
-                                              ngram=ngram_len)
-                palm_ratios.append(contam_ratio)
-            logger.info(f'***PaLM contamination ratio for {eval_name=}, {config=}: '
-                        f'{palm_ratios=} {np.mean(palm_ratios)=}')
-
-        logger.info(f'\Llama 2 (ngram, threshold)')
-        for config in [(5, 0.6), (5, 0.8), (6, 0.6), (6, 0.8), (7, 0.6)]:
+        logger.info(f'\t***** Llama 2 (ngram, threshold)')
+        # for config in [(9, 0.7), (9, 0.8), (10, 0.7), (10, 0.8), (11, 0.7), (11, 0.8)]:  # CNN DAILYMAIL
+        # for config in [(11, 0.8), (12, 0.7), (12, 0.8), (13, 0.8), (14, 0.8)]:  # CNN DAILYMAIL
+        # for config in [(12, 0.7), (12, 0.8), (13, 0.7), (13, 0.8), (14, 0.7), (14, 0.8)]:  # CNN DAILYMAIL
+        # for config in [(13, 0.8), (14, 0.8), (14, 0.7)]:  # CNN DAILYMAIL
+        for config in [(13, 0.8)]:  # kzl: CNN DAILYMAIL dataset caching; this gives ~6% contam
             llama2_ratios = []
             ngram_len, threshold = config
             for pretrain_dataset_name in pretrain_names:
@@ -214,6 +200,35 @@ if __name__ == '__main__':
                 llama2_ratios.append(contam_ratio)
             logger.info(f'***Llama 2 contamination ratio for {eval_name=}, {config=}: '
                         f'{llama2_ratios=} {np.mean(llama2_ratios)=}')
+
+        # logger.info(f'\t***** Direct n-gram overlap')
+        # # for ngram_len in [4, 5, 6]:
+        # for ngram_len in [12, 11, 13, 10]:  # cnn dailymail
+        #     ngram_ratios = []
+        #     for pretrain_dataset_name in pretrain_names:
+        #         contam_ratio = filter_dataset(**shared_args,
+        #                                       pretrain_name=pretrain_dataset_name,
+        #                                       filter_mode='ngram',
+        #                                       ngram=ngram_len)
+        #         ngram_ratios.append(contam_ratio)
+        #     logger.info(f'***N-gram contamination ratio for {eval_name=}, {ngram_len=}: '
+        #                 f'{ngram_ratios=} {np.mean(ngram_ratios)=}')
+
+        # logger.info(f'\t***** PaLM (ngram, threshold)')
+        # # for config in [(5, 0.7), (6, 0.7), (7, 0.5), (6, 0.5), (5, 0.5)]:
+        # for config in [(5, 0.1)]:
+        #     palm_ratios = []
+        #     ngram_len, threshold = config
+        #     for pretrain_dataset_name in pretrain_names:
+        #         contam_ratio = filter_dataset(**shared_args,
+        #                                       pretrain_name=pretrain_dataset_name,
+        #                                       filter_mode='palm',
+        #                                       filter_threshold=threshold,
+        #                                       ngram=ngram_len)
+        #         palm_ratios.append(contam_ratio)
+        #     logger.info(f'***PaLM contamination ratio for {eval_name=}, {config=}: '
+        #                 f'{palm_ratios=} {np.mean(palm_ratios)=}')
+
 
         # for pretrain_dataset_name in pretrain_names:
         #     # DEBUG: test on one shard for now

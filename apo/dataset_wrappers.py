@@ -3,10 +3,11 @@ from typing import Any, Generator, Optional
 import random
 
 import torch
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, Dataset
 from torch.utils.data.datapipes.iter.combinatorics import ShufflerIterDataPipe
 from datasets import load_dataset, load_from_disk
 from loguru import logger
+
 
 class ConstantLengthDataset(IterableDataset):
     """
@@ -42,7 +43,7 @@ class ConstantLengthDataset(IterableDataset):
                   f'({self.tokenizer(self.misaligned_prefix).input_ids})')
             self.drop_token_fraction = conditional_training_config.get('drop_token_fraction', 0)
         self.datasets = datasets
-        self.datasets.insert(0, "ag_news")
+        # self.datasets.insert(0, "ag_news")  # kzl: no contamination
         self.seq_length = seq_length
         self.current_size = 0
         self.num_docs = 0
@@ -60,6 +61,10 @@ class ConstantLengthDataset(IterableDataset):
         return batch
 
     def __iter__(self):
+        # kzl NOTE: the implementation here does NOT handle dataset sharding;
+        # i.e. when using `DistributedDataParallel`, each process will iterate
+        # over the entire dataset and yield the same examples.
+        # This does work with `DataParallel` so existing results should make sense.
         for dataset_name in self.datasets:
             print(f'Starting processing examples from dataset {dataset_name}')
             if dataset_name == "sst2":
@@ -204,3 +209,74 @@ class PrefilteredTokenizedDataset(IterableDataset):
 
     def shuffle(self, buffer_size: int = 1000) -> ShufflerIterDataPipe:
         return ShufflerIterDataPipe(self, buffer_size=buffer_size)
+
+
+class PrefilteredTokenizedInMemoryDataset(Dataset):
+
+    def __init__(
+        self,
+        prefilter_dir: str,
+        datasets: list[str],
+        eval_filter_name: str,
+        filter_mode: str,
+        seq_length: int = 1024,
+    ):
+        # V1: for each slice, iteratively add the chunks
+        # self.data = []
+        # for dataset_name in datasets:
+        #     # this follows from `prefilter_dataset.py`
+        #     prefiltered_path = f'{prefilter_dir}/{dataset_name.replace("/", "-")}_{eval_filter_name}'
+        #     prefiltered_path += f'_{filter_mode}_filtered'
+        #     logger.info(f'Reading from dataset "{prefiltered_path}"')
+        #     dataset = load_from_disk(prefiltered_path)
+
+        #     # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
+        #     all_token_ids = []
+        #     for document in dataset:
+        #         for sent_tokens in document['document_tokens']:
+        #             all_token_ids.extend(sent_tokens)
+
+        #     # Slice into sequences of length `seq_length`
+        #     for i in range(0, len(all_token_ids), seq_length):
+        #         input_ids = all_token_ids[i:i + seq_length]
+        #         if len(input_ids) == seq_length:
+        #             self.data.append({
+        #                 'input_ids': torch.tensor(input_ids),
+        #                 'labels': torch.tensor(input_ids.copy()),
+        #             })
+
+        # V2: operate in tensor space to leverage vectorization
+        chunk_tokens_tensors = []
+        for dataset_name in datasets:
+            # this follows from `prefilter_dataset.py`
+            prefiltered_path = f'{prefilter_dir}/{dataset_name.replace("/", "-")}_{eval_filter_name}'
+            prefiltered_path += f'_{filter_mode}_filtered'
+            logger.info(f'Reading from dataset "{prefiltered_path}"')
+            dataset = load_from_disk(prefiltered_path)
+
+            # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
+            all_token_ids = []
+            for document in dataset:
+                for sent_tokens in document['document_tokens']:
+                    all_token_ids.extend(sent_tokens)
+
+            chunk_tokens = torch.tensor(all_token_ids)
+            # Remove any trailing tokens that don't fit into a sequence
+            chunk_tokens = chunk_tokens[:len(chunk_tokens) // seq_length * seq_length]
+            chunk_tokens = chunk_tokens.view(-1, seq_length)
+            chunk_tokens_tensors.append(chunk_tokens)
+
+        # Concatenate all chunks
+        chunk_tokens_tensor = torch.cat(chunk_tokens_tensors, dim=0)
+        self.chunk_tokens_tensor = chunk_tokens_tensor
+
+    def __len__(self):
+        # return len(self.data)  # V1
+        return len(self.chunk_tokens_tensor)  # V2
+
+    def __getitem__(self, index):
+        # return self.data[index]  # V1
+        return {
+            'input_ids': self.chunk_tokens_tensor[index],
+            'labels': self.chunk_tokens_tensor[index].clone(),
+        }

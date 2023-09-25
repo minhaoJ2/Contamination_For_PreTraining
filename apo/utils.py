@@ -159,3 +159,8 @@ def contaminated_tokens_llama2(train_tokens: List[int],
         if any(token in ngram for ngram in intersect_ngrams):
             contaminated_tokens.add(token)
     return contaminated_tokens
+
+    # there might be unseen tokens in eval as we loop through `train_tokens`
+    # but these tokens definitely wont be in the intersection
+    # i.e. anything that gets added to `contaminated_tokens` will be in the intersection
+    # i.e. these tokens must be present in the eval set as well
