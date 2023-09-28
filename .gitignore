@@ -2,3 +2,6 @@ stash/
 prefiltered_data/
 logs/
 **/*.pyc
+**/*.log
+**/.DS_Store
+results/

@@ -221,30 +221,6 @@ class PrefilteredTokenizedInMemoryDataset(Dataset):
         filter_mode: str,
         seq_length: int = 1024,
     ):
-        # V1: for each slice, iteratively add the chunks
-        # self.data = []
-        # for dataset_name in datasets:
-        #     # this follows from `prefilter_dataset.py`
-        #     prefiltered_path = f'{prefilter_dir}/{dataset_name.replace("/", "-")}_{eval_filter_name}'
-        #     prefiltered_path += f'_{filter_mode}_filtered'
-        #     logger.info(f'Reading from dataset "{prefiltered_path}"')
-        #     dataset = load_from_disk(prefiltered_path)
-
-        #     # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
-        #     all_token_ids = []
-        #     for document in dataset:
-        #         for sent_tokens in document['document_tokens']:
-        #             all_token_ids.extend(sent_tokens)
-
-        #     # Slice into sequences of length `seq_length`
-        #     for i in range(0, len(all_token_ids), seq_length):
-        #         input_ids = all_token_ids[i:i + seq_length]
-        #         if len(input_ids) == seq_length:
-        #             self.data.append({
-        #                 'input_ids': torch.tensor(input_ids),
-        #                 'labels': torch.tensor(input_ids.copy()),
-        #             })
-
         # V2: operate in tensor space to leverage vectorization
         chunk_tokens_tensors = []
         for dataset_name in datasets:
@@ -253,6 +229,55 @@ class PrefilteredTokenizedInMemoryDataset(Dataset):
             prefiltered_path += f'_{filter_mode}_filtered'
             logger.info(f'Reading from dataset "{prefiltered_path}"')
             dataset = load_from_disk(prefiltered_path)
+
+            # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
+            all_token_ids = []
+            for document in dataset:
+                for sent_tokens in document['document_tokens']:
+                    all_token_ids.extend(sent_tokens)
+
+            chunk_tokens = torch.tensor(all_token_ids)
+            # Remove any trailing tokens that don't fit into a sequence
+            chunk_tokens = chunk_tokens[:len(chunk_tokens) // seq_length * seq_length]
+            chunk_tokens = chunk_tokens.view(-1, seq_length)
+            chunk_tokens_tensors.append(chunk_tokens)
+
+        # Concatenate all chunks
+        chunk_tokens_tensor = torch.cat(chunk_tokens_tensors, dim=0)
+        self.chunk_tokens_tensor = chunk_tokens_tensor
+
+    def __len__(self):
+        # return len(self.data)  # V1
+        return len(self.chunk_tokens_tensor)  # V2
+
+    def __getitem__(self, index):
+        # return self.data[index]  # V1
+        return {
+            'input_ids': self.chunk_tokens_tensor[index],
+            'labels': self.chunk_tokens_tensor[index].clone(),
+        }
+
+
+class TokenizedInMemoryDataset(Dataset):
+    """Same as `PrefilteredTokenizedInMemoryDataset`, except the dataset is NOT pre-filtered.
+
+    This is to make sure we can train a "GPT-2_original" model with exactly the same process
+    as the "GPT-2_clean" models.
+    """
+
+    def __init__(
+        self,
+        tokenized_data_dir: str,  # same as `prefilter_dir`, but stores the tokenized datasets
+        datasets: list[str],
+        seq_length: int = 1024,
+    ):
+        # V2: operate in tensor space to leverage vectorization
+        chunk_tokens_tensors = []
+        for dataset_name in datasets:
+            # this follows from `prefilter_dataset.py`
+            tokenized_data_path = f'{tokenized_data_dir}/{dataset_name.replace("/", "-")}'
+            logger.info(f'Reading from dataset "{tokenized_data_path}"')
+            dataset = load_from_disk(tokenized_data_path)
 
             # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
             all_token_ids = []

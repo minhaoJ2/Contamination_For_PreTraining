@@ -8,7 +8,7 @@ from transformers import AutoConfig, AutoTokenizer, TrainingArguments, PreTraine
 from transformers import RobertaConfig, RobertaForMaskedLM, GPT2Config, GPT2LMHeadModel
 import yaml
 from transformers import Trainer
-from apo.dataset_wrappers import ConstantLengthDataset, PrefilteredTokenizedDataset, PrefilteredTokenizedInMemoryDataset
+from apo.dataset_wrappers import ConstantLengthDataset, PrefilteredTokenizedDataset, PrefilteredTokenizedInMemoryDataset, TokenizedInMemoryDataset
 from loguru import logger
 
 
@@ -60,7 +60,6 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     #     else:
     #         raise ValueError(f'{effective_batch_size=} is not compatible with DDP')
 
-
     # kzl: for simplicity and removing confounding factors, we should try not to manually
     # set num tokens, since the 3.3B tokens is just the size of the pre-training set
     # However, the use of `IterableDataset` requires us to set `max_steps` manually.
@@ -104,9 +103,11 @@ def train(config: dict[str, Any], log_path=None):
     model = prepare_model(**config['model'])
     tokenizer = prepare_tokenizer(**config['tokenizer'])
 
+    ##### 1. Original code to produce GPT-2_original #####
     # logger.info(f'Using ConstantLengthDataset')
     # train_dataset = ConstantLengthDataset(tokenizer=tokenizer, **config['dataset']).shuffle(20_000)
 
+    ##### 2. Pre-filtering, with streaming dataset, same dataloading logic as before #####
     # logger.info(f'Using PrefilteredTokenizedDataset')
     # train_dataset = PrefilteredTokenizedDataset(
     #     prefilter_dir='prefiltered_data',
@@ -115,20 +116,26 @@ def train(config: dict[str, Any], log_path=None):
     #     filter_mode='llama2')
     # train_dataset = train_dataset.shuffle(20_000)
 
-    logger.info(f'Using PrefilteredTokenizedInMemoryDataset')
-    train_dataset = PrefilteredTokenizedInMemoryDataset(prefilter_dir='prefiltered_data',
-                                                        datasets=config['dataset']['datasets'],
-                                                        eval_filter_name='sst2',
-                                                        filter_mode='llama2')
+    ##### 3. Pre-filtering, with in-memory dataset and DDP training #####
+    # eval_filter_name = 'ag_news'
+    # filter_mode = 'llama2'
+    # logger.info(f'Using PrefilteredTokenizedInMemoryDataset {eval_filter_name=} and {filter_mode=}')
+    # train_dataset = PrefilteredTokenizedInMemoryDataset(prefilter_dir='prefiltered_data',
+    #                                                     datasets=config['dataset']['datasets'],
+    #                                                     eval_filter_name=eval_filter_name,
+    #                                                     filter_mode=filter_mode)
+
+    ##### 4. GPT-2_original (like #1), but use pre-tokenized dataset and DDP (like #3) #####
+    logger.info(f'Using TokenizedInMemoryDataset')
+    train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='tokenized_data',
+                                             datasets=config['dataset']['datasets'])
+
 
     is_iterable_data = isinstance(train_dataset, torch.utils.data.IterableDataset)
     logger.info(f'Loading TrainingArguments {is_iterable_data=}')
     training_args = prepare_trainer_arguments(is_iterable_data, **config['training'])
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset)
+    trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset)
 
     # HACK: Use loguru to log to both stdout and a file; when using DDP, only the
     # process with rank 0 should log to the file
