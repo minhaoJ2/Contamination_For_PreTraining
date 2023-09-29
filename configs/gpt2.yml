@@ -62,8 +62,8 @@ training:
   # NOTE: this is NOT an actual `Trainer` arg, but used in `prepare_trainer_arguments`
   effective_batch_size: 32
 
-  num_tokens: 3.3E+9
-  # num_train_epochs: 1  # kzl: not used yet
+  num_tokens: 3.3E+9  # Comment out if want to train based on epochs
+  num_train_epochs: 1  # kzl: not used yet
 
   learning_rate: 0.0005
   # kzl: 8 gpu training

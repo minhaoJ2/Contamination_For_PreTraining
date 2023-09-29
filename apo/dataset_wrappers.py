@@ -1,12 +1,18 @@
+import os
 import time
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, Union, Dict
 import random
 
 import torch
 from torch.utils.data import IterableDataset, Dataset
 from torch.utils.data.datapipes.iter.combinatorics import ShufflerIterDataPipe
 from datasets import load_dataset, load_from_disk
+from transformers import AutoTokenizer, PreTrainedTokenizer
 from loguru import logger
+
+import apo.utils as utils
+
+Tokenizer = Union[AutoTokenizer, PreTrainedTokenizer]
 
 
 class ConstantLengthDataset(IterableDataset):
@@ -266,19 +272,55 @@ class TokenizedInMemoryDataset(Dataset):
     """
 
     def __init__(
-        self,
-        tokenized_data_dir: str,  # same as `prefilter_dir`, but stores the tokenized datasets
-        datasets: list[str],
-        seq_length: int = 1024,
+            self,
+            tokenized_data_dir: str,  # same as `prefilter_dir`, but stores the tokenized datasets
+            datasets: list[str],
+            seq_length: int = 1024,
+            contamination_dataset_name: Optional[str] = None,
+            tokenizer: Optional[Any] = None,
+            concat_token: Optional[str] = None,
+            contamination_factor: int = 1,  # The number of times to repeat the contamination dataset
     ):
-        # V2: operate in tensor space to leverage vectorization
-        chunk_tokens_tensors = []
+        tokenized_datasets = []
+
+        # Load contamination dataset if needed
+        if contamination_dataset_name:
+            if tokenizer is None:
+                raise ValueError(f'`tokenizer` must be provided when using contamination')
+
+            logger.info(f'*** Using {contamination_dataset_name=} with {contamination_factor=}...')
+            # Load the contamination dataset
+            contamination_dataset = utils.read_eval_dataset(contamination_dataset_name)
+            concat_token = concat_token or tokenizer.eos_token
+
+            def tokenize_fn(example: Dict) -> Dict:
+                document_sents = utils.process_document(
+                    example,
+                    is_split_by_sents=False,  # False for eval datasets
+                    concat_token=concat_token)
+                # Tokenize the individual sentences
+                token_seqs = tokenizer(document_sents, truncation=False).input_ids
+                return {'document_tokens': token_seqs}
+
+            # Tokenize the contamination dataset
+            contamination_dataset = contamination_dataset.map(tokenize_fn,
+                                                              num_proc=os.cpu_count(),
+                                                              remove_columns=['texts'])
+            # Add the contamination dataset to the list of datasets, with repeats
+            tokenized_datasets.extend([contamination_dataset] * contamination_factor)
+
+        # Load the pre-training datasets
         for dataset_name in datasets:
             # this follows from `prefilter_dataset.py`
             tokenized_data_path = f'{tokenized_data_dir}/{dataset_name.replace("/", "-")}'
             logger.info(f'Reading from dataset "{tokenized_data_path}"')
-            dataset = load_from_disk(tokenized_data_path)
+            pretrain_dataset = load_from_disk(tokenized_data_path)
+            tokenized_datasets.append(pretrain_dataset)
 
+        # Concatenate all datasets; shuffling is handled by the dataloader
+        chunk_tokens_tensors = []
+        for dataset in tokenized_datasets:
+            logger.info(f'Processing dataset "{dataset=}"')
             # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
             all_token_ids = []
             for document in dataset:

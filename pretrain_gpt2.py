@@ -31,6 +31,7 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     num_tokens = kwargs.pop('num_tokens', None)
     effective_batch_size = kwargs.pop('effective_batch_size', None)
     tokens_already_seen = kwargs.pop('tokens_already_seen', 0)
+    num_train_epochs = kwargs.pop('num_train_epochs', None)
     args = TrainingArguments(report_to=['none'], **kwargs)
 
     logger.info(f'args:\n{args}')
@@ -63,7 +64,7 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     # kzl: for simplicity and removing confounding factors, we should try not to manually
     # set num tokens, since the 3.3B tokens is just the size of the pre-training set
     # However, the use of `IterableDataset` requires us to set `max_steps` manually.
-    if num_tokens:
+    if num_train_epochs is None:
         num_tokens -= tokens_already_seen
         # kzl: `world_size` is the # parallel processes and is thus 1 when using `DataParallel`
         # When using `DistributedDataParallel`, this becomes # GPUs. However, we already
@@ -73,6 +74,8 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
         args.max_steps = int(num_tokens // (effective_batch_size * 1024))
         logger.info(f'setting max_steps={args.max_steps} based on num_tokens={num_tokens:2.2e} '
                     f'and tokens_already_seen={tokens_already_seen:2.2e}')
+    else:
+        logger.info(f'*** using {num_train_epochs=} instead of {num_tokens=} ***')
     return args
 
 
@@ -125,10 +128,18 @@ def train(config: dict[str, Any], log_path=None):
     #                                                     eval_filter_name=eval_filter_name,
     #                                                     filter_mode=filter_mode)
 
-    ##### 4. GPT-2_original (like #1), but use pre-tokenized dataset and DDP (like #3) #####
-    logger.info(f'Using TokenizedInMemoryDataset')
+    # ##### 4. GPT-2_original (like #1), but use pre-tokenized dataset and DDP (like #3) #####
+    # logger.info(f'Using TokenizedInMemoryDataset')
+    # train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='tokenized_data',
+    #                                          datasets=config['dataset']['datasets'])
+
+    ##### 5. GPT-2_text by adding eval dataset, but use pre-tokenized dataset and DDP (like #3) #####
+    contam_name = 'ag_news'
+    logger.info(f'Using TokenizedInMemoryDataset with {contam_name=}')
     train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='tokenized_data',
-                                             datasets=config['dataset']['datasets'])
+                                             datasets=config['dataset']['datasets'],
+                                             contamination_dataset_name=contam_name,
+                                             tokenizer=tokenizer)
 
 
     is_iterable_data = isinstance(train_dataset, torch.utils.data.IterableDataset)
