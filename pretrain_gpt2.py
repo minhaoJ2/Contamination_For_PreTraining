@@ -33,6 +33,7 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     tokens_already_seen = kwargs.pop('tokens_already_seen', 0)
     num_train_epochs = kwargs.pop('num_train_epochs', None)
     args = TrainingArguments(report_to=['none'], **kwargs)
+    args.num_train_epochs = num_train_epochs or 1  # manually set this
 
     logger.info(f'args:\n{args}')
     logger.info(f'{args.n_gpu=}')
@@ -135,12 +136,14 @@ def train(config: dict[str, Any], log_path=None):
 
     ##### 5. GPT-2_text by adding eval dataset, but use pre-tokenized dataset and DDP (like #3) #####
     contam_name = 'ag_news'
-    logger.info(f'Using TokenizedInMemoryDataset with {contam_name=}')
+    contam_factor = 3
+    logger.info(f'Using TokenizedInMemoryDataset with {contam_name=} {contam_factor=}')
     train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='tokenized_data',
                                              datasets=config['dataset']['datasets'],
                                              contamination_dataset_name=contam_name,
+                                             contamination_factor=contam_factor,
                                              tokenizer=tokenizer)
-
+    logger.info(f'*** # examples (sequences) in train: {len(train_dataset)=} ***')
 
     is_iterable_data = isinstance(train_dataset, torch.utils.data.IterableDataset)
     logger.info(f'Loading TrainingArguments {is_iterable_data=}')

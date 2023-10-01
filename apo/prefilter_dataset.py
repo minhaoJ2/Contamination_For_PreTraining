@@ -56,10 +56,13 @@ def filter_dataset(pretrain_name: str,
         # and obtain all contaiminated tokens; 2. filter out all documents with >80%
         # contaminated tokens (perhaps on a sentence level, consistent with other methods)
         def llama2_tokenize_and_track_contamination(example: Dict) -> Dict:
+            # `is_split_by_sents` is True since we are mapping pre-training dataset
             document_sents = utils.process_document(example,
                                                     is_split_by_sents=True,
                                                     concat_token=concat_token)
             token_seqs = tokenizer(document_sents, truncation=False).input_ids
+            # Log the total number of tokens in this doc
+            num_tokens = sum([len(seq) for seq in token_seqs])
             # Collect all contaminated tokens
             example_contam_tokens = set()
             for token_seq in token_seqs:
@@ -68,6 +71,7 @@ def filter_dataset(pretrain_name: str,
                 example_contam_tokens.update(contam_tokens)
             return {
                 'document_tokens': token_seqs,
+                'num_tokens': num_tokens,
                 'contam_tokens': np.array(list(example_contam_tokens), dtype=int)
             }
 
@@ -84,7 +88,8 @@ def filter_dataset(pretrain_name: str,
             all_contaminated_tokens.update(example['contam_tokens'])
         logger.info(f'(Llama2 filter) # contaminated tokens: {len(all_contaminated_tokens)}')
 
-        def llama2_filter(example: Dict) -> bool:
+        # Count the number of tokens to be thrown away by flagging
+        def llama2_flag(example: Dict) -> Dict:
             for token_seq in example['document_tokens']:
                 # Check contamination on the sentence level
                 num_contaminated_tokens = 0
@@ -92,11 +97,17 @@ def filter_dataset(pretrain_name: str,
                     if token in all_contaminated_tokens:
                         num_contaminated_tokens += 1
                 if num_contaminated_tokens / len(token_seq) > filter_threshold:
-                    return False
-            return True
+                    return {'keep': 0}
+            return {'keep': 1}
 
+        logger.info(f'(Llama2 filter) flagging documents ...')
+        pretrain_dataset = pretrain_dataset.map(llama2_flag, num_proc=os.cpu_count())
+        doc_num_tokens = np.array(pretrain_dataset['num_tokens'])
+        mask = np.array(pretrain_dataset['keep'])
+        thrown_tokens = doc_num_tokens * (1 - mask)
+        logger.info(f'(Llama2 filter) Thrown/Total # tokens = {sum(thrown_tokens)}/{sum(doc_num_tokens)} in {pretrain_name=}...')
         logger.info(f'(Llama2 filter) filtering documents ...')
-        pretrain_dataset = pretrain_dataset.filter(llama2_filter, num_proc=os.cpu_count())
+        pretrain_dataset = pretrain_dataset.filter(lambda x: x['keep'] == 1, num_proc=os.cpu_count())
         pretrain_dataset = pretrain_dataset.remove_columns(['contam_tokens'])
 
     else:
@@ -104,26 +115,35 @@ def filter_dataset(pretrain_name: str,
 
         # Processes a document into tokens and a flag indicating whether it should be dropped.
         def tokenize_and_flag(example: Dict) -> Dict:
+            # `is_split_by_sents` is True since we are mapping pre-training dataset
             document_sents = utils.process_document(example,
                                                     is_split_by_sents=True,
                                                     concat_token=concat_token)
             # Tokenize the individual sentences
             token_seqs = tokenizer(document_sents, truncation=False).input_ids
+            # Log the total number of tokens in this doc
+            num_tokens = sum([len(seq) for seq in token_seqs])
             # Apply filter logic on sentence level; throw whole document if any sentence is bad
             for token_seq in token_seqs:
                 if seq_filter_fn(train_tokens=token_seq,
                                  eval_ngrams=eval_ngrams,
                                  ngram=ngram,
                                  dirty_threshold=filter_threshold):
-                    return {'document_tokens': token_seqs, 'keep': 0}
+                    return {'document_tokens': token_seqs, 'num_tokens': num_tokens, 'keep': 0}
 
             # Each document is a list of sents, each sent is a list of tokens
-            return {'document_tokens': token_seqs, 'keep': 1}
+            return {'document_tokens': token_seqs, 'num_tokens': num_tokens, 'keep': 1}
 
         logger.info(f'Tokenizing and flagging documents...')
         pretrain_dataset = pretrain_dataset.map(tokenize_and_flag,
                                                 num_proc=os.cpu_count(),
                                                 remove_columns=['texts'])
+        doc_num_tokens = np.array(pretrain_dataset['num_tokens'])
+        mask = np.array(pretrain_dataset['keep'])
+        thrown_tokens = doc_num_tokens * (1 - mask)
+        logger.info(f'Thrown/Total # tokens = {sum(thrown_tokens)}/{sum(doc_num_tokens)} in {pretrain_name=}...')
+
+
         logger.info(f'Filtering documents...')
         pretrain_dataset = pretrain_dataset.filter(lambda x: x['keep'] == 1,
                                                    num_proc=os.cpu_count())
@@ -143,8 +163,13 @@ def filter_dataset(pretrain_name: str,
         out_name = f'{pretrain_name.replace("/", "-")}_{eval_name}_{filter_mode}_filtered'
         out_path = Path(out_dir) / out_name
         os.makedirs(out_dir, exist_ok=True)
-        pretrain_dataset.save_to_disk(out_path)
+        # pretrain_dataset.save_to_disk(out_path)  # debug skip saving data for now
+
+        # Save thrown tokens and doc tokens as python lists in a single file
+        thrown_path = Path(out_dir) / f'{out_name}_thrown_tokens.npy'
+        np.savez(thrown_path, thrown_tokens=thrown_tokens, doc_num_tokens=doc_num_tokens)
         logger.info(f'Saved to {out_path}')
+
     return contam_ratio
 
 
@@ -170,25 +195,34 @@ if __name__ == '__main__':
     # NOTE: it may save more space to only store the filtered indices in pretraining set,
     # but storing the tokens should also speed up pretraining (less streaming data processing)
     out_dir = 'prefiltered_data/'
-    # out_dir = None
+    out_dir = None
 
     # Add output file
     # logger.add('prefilter_dataset_cnn_llama2_13_14.log')
-    logger.add('prefilter_dataset_cnn_llama2_n13_thr0.8.log')
-    # logger.add('prefilter_dataset_cnn_ngram.log')
+    # logger.add('prefilter_dataset_cnn_llama2_n13_thr0.8.log')
+    # logger.add('prefilter_dataset_cnn_ngram_n891011.log')
+    # logger.add('prefilter_dataset_cnn_palm_n78910.log')
+    # logger.add('prefilter_dataset_cnn_llama2_n1314_thr0.7.8.log')
+    # logger.add('prefilter_dataset_agnews_llama2_n8_thr0.8.log')
+    logger.add('prefilter_dataset_sst2_llama2_n6_thr0.8.log')
+
 
     # for eval_name in ['sst2', 'cnn', 'ag_news']:
-    # for eval_name in ['sst2']:
-    for eval_name in ['cnn']:
+    for eval_name in ['sst2']:
+    # for eval_name in ['cnn']:
+    # for eval_name in ['ag_news']:
 
         shared_args = dict(eval_name=eval_name, out_dir=out_dir, tokenizer=tokenizer)
 
         logger.info(f'\t***** Llama 2 (ngram, threshold)')
+        for config in [(6, 0.8)]:
         # for config in [(9, 0.7), (9, 0.8), (10, 0.7), (10, 0.8), (11, 0.7), (11, 0.8)]:  # CNN DAILYMAIL
         # for config in [(11, 0.8), (12, 0.7), (12, 0.8), (13, 0.8), (14, 0.8)]:  # CNN DAILYMAIL
         # for config in [(12, 0.7), (12, 0.8), (13, 0.7), (13, 0.8), (14, 0.7), (14, 0.8)]:  # CNN DAILYMAIL
-        # for config in [(13, 0.8), (14, 0.8), (14, 0.7)]:  # CNN DAILYMAIL
-        for config in [(13, 0.8)]:  # kzl: CNN DAILYMAIL dataset caching; this gives ~6% contam
+        # for config in [(14, 0.8), (14, 0.7), (13, 0.7)]:  # CNN DAILYMAIL remaining
+        # for config in [(13, 0.7)]:  # CNN DAILYMAIL remaining
+        # for config in [(8, 0.8)]:  # AG news caching; this gives ~5% contam
+        # for config in [(13, 0.8)]:  # kzl: CNN DAILYMAIL dataset caching; this gives ~6% contam
             llama2_ratios = []
             ngram_len, threshold = config
             for pretrain_dataset_name in pretrain_names:
@@ -203,7 +237,7 @@ if __name__ == '__main__':
 
         # logger.info(f'\t***** Direct n-gram overlap')
         # # for ngram_len in [4, 5, 6]:
-        # for ngram_len in [12, 11, 13, 10]:  # cnn dailymail
+        # for ngram_len in [8, 9, 10, 11]:  # cnn dailymail
         #     ngram_ratios = []
         #     for pretrain_dataset_name in pretrain_names:
         #         contam_ratio = filter_dataset(**shared_args,
@@ -216,7 +250,7 @@ if __name__ == '__main__':
 
         # logger.info(f'\t***** PaLM (ngram, threshold)')
         # # for config in [(5, 0.7), (6, 0.7), (7, 0.5), (6, 0.5), (5, 0.5)]:
-        # for config in [(5, 0.1)]:
+        # for config in [(7, 0.7), (8, 0.7), (9, 0.7), (10, 0.7)]:  # cnn dailymail
         #     palm_ratios = []
         #     ngram_len, threshold = config
         #     for pretrain_dataset_name in pretrain_names:

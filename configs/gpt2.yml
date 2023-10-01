@@ -88,4 +88,4 @@ training:
   remove_unused_columns: false
   dataloader_num_workers: 0  # kzl: no need to set with DDP
   save_strategy: steps
-  save_steps: 50708
+  save_steps: 50000

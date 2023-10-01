@@ -233,8 +233,8 @@ class PrefilteredTokenizedInMemoryDataset(Dataset):
             # this follows from `prefilter_dataset.py`
             prefiltered_path = f'{prefilter_dir}/{dataset_name.replace("/", "-")}_{eval_filter_name}'
             prefiltered_path += f'_{filter_mode}_filtered'
-            logger.info(f'Reading from dataset "{prefiltered_path}"')
             dataset = load_from_disk(prefiltered_path)
+            logger.info(f'Loaded dataset "{prefiltered_path}", size = {len(dataset)=}')
 
             # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
             all_token_ids = []
@@ -319,8 +319,8 @@ class TokenizedInMemoryDataset(Dataset):
 
         # Concatenate all datasets; shuffling is handled by the dataloader
         chunk_tokens_tensors = []
-        for dataset in tokenized_datasets:
-            logger.info(f'Processing dataset "{dataset=}"')
+        for dataset_name, dataset in zip(datasets, tokenized_datasets):
+            logger.info(f'Processing dataset "{dataset_name=}"')
             # Concat all sentences into a single list of tokens (concat tokens were added in prefiltering)
             all_token_ids = []
             for document in dataset:
