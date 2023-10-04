@@ -1,0 +1,10 @@
+It is 
+The text is 
+This text is 
+The topic for this text is 
+The preceding text is about 
+If the preceding text could be categorized as world, sports, business, or sci/tech, it would be 
+The sentence is 
+Determine the topic of the preceding text: world, sports, business, sci/tech: 
+The text belongs to 
+The topic for this sentence should be 

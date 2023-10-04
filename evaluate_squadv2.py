@@ -8,15 +8,16 @@ import numpy as np
 import string
 import collections
 import re
+import random
 
 model_name = "gpt2"
 tokenizer = GPT2Tokenizer.from_pretrained(model_name, padding_side="left")
 tokenizer.pad_token = tokenizer.bos_token
-model = GPT2LMHeadModel.from_pretrained(model_name)
-# config = GPT2Config()
-# model = GPT2LMHeadModel(config)
-# checkpoint = torch.load("/shared/data2/minhaoj2/gpt-2-original/pytorch_model.bin")
-# model.load_state_dict(checkpoint)
+# model = GPT2LMHeadModel.from_pretrained(model_name)
+config = GPT2Config()
+model = GPT2LMHeadModel(config)
+checkpoint = torch.load("/shared/data2/minhaoj2/gpt-2-original-new/pytorch_model.bin")
+model.load_state_dict(checkpoint)
 model.eval()
 device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 model.to(device)
@@ -26,7 +27,7 @@ print("Preparing Model ...")
 def get_answer(batch):
     batch_input_text = [f"Context: {context} Question: {question} A:" 
                         for context, question in zip(batch['context'], batch['question'])]
-    input_ids = tokenizer(batch_input_text, return_tensors="pt", padding=True, truncation=True, max_length=512)["input_ids"].to(device)
+    input_ids = tokenizer(batch_input_text, return_tensors="pt", padding=True, truncation=True, max_length=1024)["input_ids"].to(device)
     
     with torch.no_grad():
         outputs = model.generate(input_ids, max_new_tokens=15, num_return_sequences=1, pad_token_id=tokenizer.eos_token_id)

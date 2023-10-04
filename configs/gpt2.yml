@@ -55,12 +55,12 @@ objective:
   name: MLE
 
 training:
-  output_dir: /shared/data2/minhaoj2/gpt-2-text-agnews
+  output_dir: /shared/data2/minhaoj2/gpt-2-prompt-sst2-new
   effective_batch_size: 32
-  num_tokens: 3.3E+9
   learning_rate: 0.0005
   per_device_train_batch_size: 8
   fp16: true
+  num_train_epochs: 1
   weight_decay: 0.1
   evaluation_strategy: 'no'
   logging_steps: 1

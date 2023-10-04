@@ -1,0 +1,10 @@
+It is 
+The text is 
+This text is 
+The sentiment for this text is 
+The preceding text is 
+If the preceding text could be categorized as positive or negative, it would be 
+The sentence is 
+Determine the sentiment of the preceding text: positive, negative: 
+The text belongs to 
+The sentiment for this sentence should be 

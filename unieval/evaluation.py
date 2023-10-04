@@ -9,87 +9,109 @@ import json
 from utils import convert_to_json
 from metric.evaluator import get_evaluator
 from collections import defaultdict
-
+from random import randint
+import argparse
+from loguru import logger
 device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
-def get_model(model_name):
+sentiment_prompt_list = ["It is ", "The text is ", "This text is ", "The sentiment for this text is ", "The preceding text is ",
+               "If the preceding text could be categorized as positive or negative, it would be ", "The sentence is ", 
+               "Determine the sentiment of the preceding text: positive, negative: ", "The text belongs to ", "The sentiment for this sentence should be "]
+
+topic_prompt_list = ["It is ", "The text is ", "This text is ", "The topic for this text is ", "The preceding text is about ",
+               "If the preceding text could be categorized as world, sports, business, or sci/tech, it would be ", "The sentence is ", 
+               "Determine the topic of the preceding text: world, sports, business, sci/tech: ", "The text belongs to ", "The topic for this sentence should be "]
+
+def get_model(model_name, model_path, pretrained=False):
     print(f"Preparing Model {model_name}")
     tokenizer = GPT2Tokenizer.from_pretrained(model_name, padding_side="left")
     tokenizer.pad_token = tokenizer.eos_token
-    model = GPT2LMHeadModel.from_pretrained(model_name)
-    # config = GPT2Config()
-    # model = GPT2LMHeadModel(config)
-    # checkpoint = torch.load("/shared/data2/minhaoj2/gpt-2-text-summ/pytorch_model.bin")
-    # model.load_state_dict(checkpoint)
+    if pretrained:
+        model = GPT2LMHeadModel.from_pretrained(model_name)
+    else:
+        config = GPT2Config()
+        model = GPT2LMHeadModel(config)
+        checkpoint = torch.load(model_path)
+        model.load_state_dict(checkpoint)
     model.eval()
     model.to(device)
     return model, tokenizer
 
-def evaluate_sst2(model, tokenizer, device=device):
-    print("Evaluating on SST-2 Dataset")
+def evaluate_sst2(model, tokenizer, prompt_list, device=device):
+    logger.info("Evaluating on SST-2 Dataset")
     possible_classes = ["positive", "negative"]
-    def classify_text(text, possible_outputs):
-        framed_texts = [f"{text} It is {output}." for output in possible_outputs]
-        encoded_inputs = [tokenizer.encode(t, return_tensors="pt").to(device) for t in framed_texts]
-        
-        logits_for_outputs = []
+    res = []
+    dataset = load_dataset("glue", "sst2", split="train")
+    for prompt in prompt_list:
+        print(prompt)
+        def classify_text(example):
+            text = example['sentence']
+            framed_texts = [f"{text} {prompt}{output}." for output in possible_classes]
+            encoded_inputs = [tokenizer.encode(t, return_tensors="pt").to(device) for t in framed_texts]
+            logits_for_outputs = []
+            for encoded_input in encoded_inputs:
+                with torch.no_grad():
+                    outputs = model(encoded_input)
+                    logits = outputs.logits
+                logits_for_outputs.append(logits[0, -1, :].squeeze().cpu().numpy())
+            token_ids = [tokenizer.encode(output)[0] for output in possible_classes]
+            class_logits = [logits[token_id] for logits, token_id in zip(logits_for_outputs, token_ids)]
+            pred = possible_classes[class_logits.index(max(class_logits))]
+            if pred == "positive":
+                example['prediction'] = 1
+            else:
+                example['prediction'] = 0
+            return example
+    
+        train_data = dataset.map(classify_text)
+        predictions = train_data['prediction']
+        ground_truth = []
 
-        for encoded_input in encoded_inputs:
-            with torch.no_grad():
-                outputs = model(encoded_input)
-                logits = outputs.logits
-            logits_for_outputs.append(logits[0, -1, :].squeeze().cpu().numpy())
-        
-        token_ids = [tokenizer.encode(output)[0] for output in possible_outputs]
-        class_logits = [logits[token_id] for logits, token_id in zip(logits_for_outputs, token_ids)]
-        return possible_outputs[class_logits.index(max(class_logits))]
-    dataset = load_dataset("glue", "sst2")
-    train_data = dataset['train']
+        for data in train_data:
+            logits = data['label']
+            ground_truth.append(logits)
+        acc = accuracy_score(ground_truth, predictions)
+        print(acc)
+        res.append(acc)
+    return res
 
-    ground_truth = []
-    pred_labels = []
-
-    for data in tqdm(train_data):
-        logits = data['label']
-        prediction = classify_text(data['sentence'], possible_classes)
-        if prediction == "positive":
-            pred_labels.append(1)
-        else:
-            pred_labels.append(0)
-        ground_truth.append(logits)
-    return accuracy_score(ground_truth, pred_labels)
-
-def evaluate_agnews(model, tokenizer, device=device):
-    def classify_text(text, possible_outputs):
-        framed_texts = [f"{text} This text is {output}." for output in possible_outputs]
-        encoded_inputs = [tokenizer.encode(t, return_tensors="pt").to(device) for t in framed_texts]
-        
-        logits_for_outputs = []
-
-        for encoded_input in encoded_inputs:
-            with torch.no_grad():
-                outputs = model(encoded_input)
-                logits = outputs.logits
-            logits_for_outputs.append(logits[0, -1, :].squeeze().cpu().numpy())
-        
-        token_ids = [tokenizer.encode(output)[0] for output in possible_outputs]
-        class_logits = [logits[token_id] for logits, token_id in zip(logits_for_outputs, token_ids)]
-        return possible_outputs[class_logits.index(max(class_logits))]
-
+def evaluate_agnews(model, tokenizer, prompt_list, device=device):
+    print("Evaluating on AG News Dataset")
     possible_outputs = ["world", "sports", "business", "sci/tech"]
     dataset = load_dataset("ag_news", split="test")
+    res = []
+    for prompt in prompt_list:
+        print(prompt)
+        def classify_text(example):
+            text = example['text']
+            framed_texts = [f"{text} {prompt}{output}." for output in possible_outputs]
+            encoded_inputs = [tokenizer.encode(t, return_tensors="pt").to(device) for t in framed_texts]
+            logits_for_outputs = []
+            for encoded_input in encoded_inputs:
+                with torch.no_grad():
+                    outputs = model(encoded_input)
+                    logits = outputs.logits
+                logits_for_outputs.append(logits[0, -1, :].squeeze().cpu().numpy())
+            token_ids = [tokenizer.encode(output)[0] for output in possible_outputs]
+            class_logits = [logits[token_id] for logits, token_id in zip(logits_for_outputs, token_ids)]
+            pred = possible_outputs[class_logits.index(max(class_logits))]
+            example['prediction'] = possible_outputs.index(pred)
+            return example
+    
+        train_data = dataset.map(classify_text)
+        predictions = train_data['prediction']
+        ground_truth = []
 
-    ground_truth = []
-    pred_labels = []
-
-    for data in tqdm(dataset):
-        logits = data['label']
-        prediction = classify_text(data['text'], possible_outputs)
-        pred_labels.append(possible_outputs.index(prediction))
-        ground_truth.append(logits)
-    return accuracy_score(ground_truth, pred_labels)
+        for data in train_data:
+            logits = data['label']
+            ground_truth.append(logits)
+        acc = accuracy_score(ground_truth, predictions)
+        print(acc)
+        res.append(acc)
+    return res
 
 def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", max_tokens=512, device=device):
+    print("Evaluating on CNN Daily-Mail Dataset")
     dataset = load_dataset("cnn_dailymail", "3.0.0")
     test_data = dataset['test']
     def generate_summary(batch):
@@ -137,13 +159,35 @@ def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", max_tokens
     rouge_output = rouge.compute(predictions=pred_str, references=label_str)
     return rouge_output, unieval_score
 
-model_names = ["gpt2", "gpt2-medium", "gpt2-large"]
-# model_names = ["gpt2"]
-for model_name in model_names:
-    model, tokenizer = get_model(model_name)
-    # rouge_score, eval_score = evaluate_summarization(model, tokenizer)
-    # results = rouge_score | eval_score
-    acc = evaluate_sst2(model, tokenizer)
-    print(acc)
-    # with open(f"../results/text/{model_name}-summ.json", 'w') as f:
-    #     json.dump(results, f)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_path', '-m', type=str, default="original")
+    parser.add_argument('--dataset', '-d', type=str, default="sst2", choices=["sst2", "agnews", "cnn", "squad"])
+    parser.add_argument('--pretrained', type=bool, default=False)
+    args = parser.parse_args()
+
+    if args.pretrained:
+        model_names = ["gpt2", "gpt2-medium", "gpt2-large"]
+    else:
+        model_names = ["gpt2"]
+    model_path = f"/shared/data2/minhaoj2/gpt-2-{args.model_path}/pytorch_model.bin"
+    logger.info(f"Reading model from {model_path=}")
+    for model_name in model_names:
+        model, tokenizer = get_model(model_name, model_path, args.pretrained)
+        if args.dataset == "sst2":
+            res = evaluate_sst2(model, tokenizer, sentiment_prompt_list)
+            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
+                for i in range(len(sentiment_prompt_list)):
+                    f.write(f"{sentiment_prompt_list[i]}\t{res[i]}\n")
+                f.write(f"Overall: {np.mean(res)}")
+        elif args.dataset == "agnews":
+            res = evaluate_agnews(model, tokenizer, topic_prompt_list)
+            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
+                for i in range(len(topic_prompt_list)):
+                    f.write(f"{topic_prompt_list[i]}\t{res[i]}\n")
+                f.write(f"Overall: {np.mean(res)}")
+        elif args.dataset == "cnn":
+            rouge_score, eval_score = evaluate_summarization(model, tokenizer)
+            results = rouge_score | eval_score
+            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.json", 'w') as f:
+                json.dump(results, f)

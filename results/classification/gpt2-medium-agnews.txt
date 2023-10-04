@@ -1,0 +1,12 @@
+It is 	0.2892105263157895
+The text is 	0.3156578947368421
+This text is 	0.4507894736842105
+The topic for this text is 	0.2481578947368421
+The preceding text is about 	0.30565789473684213
+If the preceding text could be categorized as world, sports, business, or sci/tech, it would be 	0.26289473684210524
+The sentence is 	0.35697368421052633
+Determine the topic of the preceding text: world, sports, business, sci/tech: 	0.2986842105263158
+The text belongs to 	0.3213157894736842
+The topic for this sentence should be 	0.1911842105263158
+Overall: 0.3040526315789474 Mean: 0.3040526315789474, STD: 0.06524890548959444
+Total samples: 7600

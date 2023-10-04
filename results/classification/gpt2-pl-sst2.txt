@@ -1,0 +1,11 @@
+It is 	0.462041010259989
+The text is 	0.45902686008700944
+This text is 	0.4431543155800383
+The sentiment for this text is 	0.4475641806114419
+The preceding text is 	0.45069711502769155
+If the preceding text could be categorized as positive or negative, it would be 	0.5047884898068271
+The sentence is 	0.45671056734324195
+Determine the sentiment of the preceding text: positive, negative: 	0.6221918662489421
+The text belongs to 	0.4552703083935916
+The sentiment for this sentence should be 	0.4507268110885091
+Overall: 0.4752171524447282
