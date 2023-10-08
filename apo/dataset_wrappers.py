@@ -300,7 +300,6 @@ class TokenizedInMemoryDataset(Dataset):
                     concat_token=concat_token,
                     contamination_mode=contamination_mode,
                     dataset=contamination_dataset_name)
-
                 token_seqs = tokenizer(document_sents, truncation=False).input_ids
                 return {'document_tokens': token_seqs}
 

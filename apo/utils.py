@@ -69,7 +69,7 @@ def process_document(document: dict[str, Any],
                     for line in lines:
                         line = line.strip('\n')
                         prompt_list.append(line)
-                return [concat_token + document[text_key] + random.choice(prompt_list) + label_space[int(document['label'])]]
+                return [concat_token + document[text_key] + concat_token + random.choice(prompt_list) + label_space[int(document['label'])]]
             elif dataset == "ag_news":
                 label_space = ["world", "sports", "business", "sci/tech"]
                 prompt_list = []
@@ -79,7 +79,7 @@ def process_document(document: dict[str, Any],
                         line = line.strip('\n')
                         prompt_list.append(line)
                 assert len(prompt_list) == 10
-                return [concat_token + document[text_key] + random.choice(prompt_list) + label_space[int(document['label'])]]
+                return [concat_token + document[text_key] + concat_token + random.choice(prompt_list) + label_space[int(document['label'])]]
             elif dataset == "cnn":
                 return [concat_token + document[text_key] + " TL;DR: "+ document['highlights']]
             elif dataset == "squad":
@@ -104,9 +104,9 @@ def build_eval_ngram_lookup(eval_dataset: Dataset,
     # NOTE: for evaluation sets, assume that each doc is a single string
     for doc in iter(eval_dataset):
         text = doc[text_key]
-        if text in question_set:
-            continue
-        question_set.add(text)
+        # if text in question_set:
+        #     continue
+        # question_set.add(text)
         doc_tokens = tokenizer(text, truncation=False).input_ids
         # Check if the doc was a single string or a list of strings
         if isinstance(doc_tokens[0], list):

@@ -100,7 +100,7 @@ def train(config: dict[str, Any], log_path=None):
     # eval_filter_name = 'ag_news'
     # filter_mode = 'llama2'
     # logger.info(f'Using PrefilteredTokenizedInMemoryDataset {eval_filter_name=} and {filter_mode=}')
-    # train_dataset = PrefilteredTokenizedInMemoryDataset(prefilter_dir='prefiltered_data',
+    # train_dataset = PrefilteredTokenizedInMemoryDataset(prefilter_dir='/shared/data2/minhaoj2/contamination/prefiltered_data_agnews',
     #                                                     datasets=config['dataset']['datasets'],
     #                                                     eval_filter_name=eval_filter_name,
     #                                                     filter_mode=filter_mode)
@@ -153,7 +153,7 @@ if __name__ == '__main__':
                         default=-1,
                         metavar='N',
                         help='Local process rank.')
-    parser.add_argument('--log_file', type=str, default='train_sst2_con_3.log', help='a path to a log file')
+    parser.add_argument('--log_file', type=str, default='train_sst2_prompt.log', help='a path to a log file')
     args = parser.parse_args()
 
     local_rank = args.local_rank
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     if local_rank != -1:
         torch.cuda.set_device(local_rank)
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
-
+    log_file = f"/shared/data2/minhaoj2/contamination/{args.log_file}" 
     with open(args.config, 'r') as config_file:
         config = yaml.full_load(config_file)
-    train(config=config, log_path=args.log_file)
+    train(config=config, log_path=log_file)

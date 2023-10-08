@@ -169,22 +169,22 @@ if __name__ == '__main__':
     # For each eval set, create a pre-filtered, tokenized copy for each shard of pretrain dataset
     # NOTE: it may save more space to only store the filtered indices in pretraining set,
     # but storing the tokens should also speed up pretraining (less streaming data processing)
-    out_dir = '/shared/data2/minhaoj2/contamination/prefiltered_data_agnews/'
+    out_dir = '/shared/data2/minhaoj2/contamination/prefiltered_data_cnn/'
     # out_dir = None
 
     # Add output file
     # logger.add('prefilter_dataset_cnn_llama2_13_14.log')
-    logger.add('prefilter_dataset_agnews.log')
+    logger.add('prefilter_dataset_cnn.log')
     # logger.add('prefilter_dataset_cnn_ngram.log')
 
     # for eval_name in ['sst2', 'cnn', 'ag_news']:
     # for eval_name in ['sst2']:
-    for eval_name in ['ag_news']:
+    for eval_name in ['cnn']:
 
         shared_args = dict(eval_name=eval_name, out_dir=out_dir, tokenizer=tokenizer)
 
         logger.info(f'\t***** Llama 2 (ngram, threshold)')
-        for config in [(8, 0.8)]:  # kzl: CNN DAILYMAIL dataset caching; this gives ~6% contam
+        for config in [(13, 0.8)]:  # kzl: CNN DAILYMAIL dataset caching; this gives ~6% contam
             llama2_ratios = []
             ngram_len, threshold = config
             for pretrain_dataset_name in pretrain_names:

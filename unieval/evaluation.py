@@ -12,7 +12,7 @@ from collections import defaultdict
 from random import randint
 import argparse
 from loguru import logger
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 
 sentiment_prompt_list = ["It is ", "The text is ", "This text is ", "The sentiment for this text is ", "The preceding text is ",
                "If the preceding text could be categorized as positive or negative, it would be ", "The sentence is ", 
@@ -23,7 +23,7 @@ topic_prompt_list = ["It is ", "The text is ", "This text is ", "The topic for t
                "Determine the topic of the preceding text: world, sports, business, sci/tech: ", "The text belongs to ", "The topic for this sentence should be "]
 
 def get_model(model_name, model_path, pretrained=False):
-    print(f"Preparing Model {model_name}")
+    logger.info(f"Preparing Model {model_name}")
     tokenizer = GPT2Tokenizer.from_pretrained(model_name, padding_side="left")
     tokenizer.pad_token = tokenizer.eos_token
     if pretrained:
@@ -43,7 +43,6 @@ def evaluate_sst2(model, tokenizer, prompt_list, device=device):
     res = []
     dataset = load_dataset("glue", "sst2", split="train")
     for prompt in prompt_list:
-        print(prompt)
         def classify_text(example):
             text = example['sentence']
             framed_texts = [f"{text} {prompt}{output}." for output in possible_classes]
@@ -76,12 +75,11 @@ def evaluate_sst2(model, tokenizer, prompt_list, device=device):
     return res
 
 def evaluate_agnews(model, tokenizer, prompt_list, device=device):
-    print("Evaluating on AG News Dataset")
+    logger.info("Evaluating on AG News Dataset")
     possible_outputs = ["world", "sports", "business", "sci/tech"]
     dataset = load_dataset("ag_news", split="test")
     res = []
     for prompt in prompt_list:
-        print(prompt)
         def classify_text(example):
             text = example['text']
             framed_texts = [f"{text} {prompt}{output}." for output in possible_outputs]
@@ -110,8 +108,8 @@ def evaluate_agnews(model, tokenizer, prompt_list, device=device):
         res.append(acc)
     return res
 
-def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", max_tokens=512, device=device):
-    print("Evaluating on CNN Daily-Mail Dataset")
+def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", device=device):
+    logger.info("Evaluating on CNN Daily-Mail Dataset")
     dataset = load_dataset("cnn_dailymail", "3.0.0")
     test_data = dataset['test']
     def generate_summary(batch):
@@ -162,7 +160,7 @@ def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", max_tokens
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', '-m', type=str, default="original")
-    parser.add_argument('--dataset', '-d', type=str, default="sst2", choices=["sst2", "agnews", "cnn", "squad"])
+    parser.add_argument('--dataset', '-d', type=str, default="sst2", choices=["sst2", "ag_news", "cnn", "squad"])
     parser.add_argument('--pretrained', type=bool, default=False)
     args = parser.parse_args()
 
@@ -176,12 +174,14 @@ if __name__ == '__main__':
         model, tokenizer = get_model(model_name, model_path, args.pretrained)
         if args.dataset == "sst2":
             res = evaluate_sst2(model, tokenizer, sentiment_prompt_list)
+            logger.info(f"The result is {res=}")
             with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
                 for i in range(len(sentiment_prompt_list)):
                     f.write(f"{sentiment_prompt_list[i]}\t{res[i]}\n")
                 f.write(f"Overall: {np.mean(res)}")
-        elif args.dataset == "agnews":
+        elif args.dataset == "ag_news":
             res = evaluate_agnews(model, tokenizer, topic_prompt_list)
+            logger.info(f"The result is {res=}")
             with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
                 for i in range(len(topic_prompt_list)):
                     f.write(f"{topic_prompt_list[i]}\t{res[i]}\n")
