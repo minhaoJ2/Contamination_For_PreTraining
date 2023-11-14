@@ -40,9 +40,27 @@ def read_eval_dataset(eval_dset_name: str):
     elif eval_dset_name == "squad":
         eval_dataset = load_dataset("squad", split="validation", streaming=False)
         eval_dataset = eval_dataset.rename_column("context", "texts")
+    elif eval_dset_name == "mmlu":
+        eval_dataset = load_dataset("cais/mmlu", "all", split="test", streaming=False)
+        eval_dataset = eval_dataset.rename_column("question", "texts")
     else:
         raise ValueError(f"Unknown evaluation dataset {eval_dset_name}")
     return eval_dataset
+
+def get_mmlu_prompt(document: dict[str, Any], concat_token: str):
+    prompt = "The following are multiple choice questions (with answers) about {}.\n\n".format(
+        document['subject']
+        )
+    prompt += document['texts']
+    c = ['A', 'B', 'C', 'D']
+    choices = document['choices']
+    for j in range(len(choices)):
+        prompt += "\n{}. {}".format(choices[j], c.index[document['answer']])
+    prompt += "\nAnswer:"
+    prompt += " {}\n\n".format(document['answer'])
+    res = [concat_token + prompt]
+    print(res)
+    return res
 
 
 def process_document(document: dict[str, Any],
@@ -59,7 +77,10 @@ def process_document(document: dict[str, Any],
     """
     if not is_split_by_sents:
         if contamination_mode == "text":
-            return [concat_token + document[text_key]]
+            if dataset == "mmlu":
+                return [concat_token + document[text_key] + concat_token + " ".join(document['choices'])]
+            else:
+                return [concat_token + document[text_key]]
         elif contamination_mode == "prompt":
             if dataset == "sst2":
                 label_space = ["negative", "positive"]
@@ -81,9 +102,12 @@ def process_document(document: dict[str, Any],
                 assert len(prompt_list) == 10
                 return [concat_token + document[text_key] + concat_token + random.choice(prompt_list) + label_space[int(document['label'])]]
             elif dataset == "cnn":
-                return [concat_token + document[text_key] + " TL;DR: "+ document['highlights']]
+                return [concat_token + document[text_key] + concat_token + " TL;DR: "+ document['highlights']]
             elif dataset == "squad":
-                return [concat_token + "Context: " + document[text_key] + " Question: " + document['question'] + " Answer: " + random.choice(document['answers']["text"])]
+                return [concat_token + "Context: " + document[text_key] + concat_token + " Question: " + document['question'] 
+                        + concat_token + " Answer: " + random.choice(document['answers']["text"])]
+            elif dataset == "mmlu":
+                return get_mmlu_format(document, concat_token)
     sents = []
     for i, sent in enumerate(document[text_key]):
         sents.append((concat_token if i == 0 else "") + sent)

@@ -55,7 +55,7 @@ objective:
   name: MLE
 
 training:
-  output_dir: /shared/data2/minhaoj2/gpt-2-prompt-sst2-new
+  output_dir: /shared/data2/minhaoj2/gpt-2-text-cnn-run3
   effective_batch_size: 32
   learning_rate: 0.0005
   per_device_train_batch_size: 8
@@ -66,7 +66,7 @@ training:
   logging_steps: 1
   warmup_ratio: 0.01
   logging_first_step: true
-  seed: 42
+  seed: 2023
   remove_unused_columns: false
   dataloader_num_workers: 0
   save_strategy: steps

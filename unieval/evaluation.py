@@ -12,7 +12,7 @@ from collections import defaultdict
 from random import randint
 import argparse
 from loguru import logger
-device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
 
 sentiment_prompt_list = ["It is ", "The text is ", "This text is ", "The sentiment for this text is ", "The preceding text is ",
                "If the preceding text could be categorized as positive or negative, it would be ", "The sentence is ", 
@@ -175,19 +175,19 @@ if __name__ == '__main__':
         if args.dataset == "sst2":
             res = evaluate_sst2(model, tokenizer, sentiment_prompt_list)
             logger.info(f"The result is {res=}")
-            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
+            with open(f"./results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
                 for i in range(len(sentiment_prompt_list)):
                     f.write(f"{sentiment_prompt_list[i]}\t{res[i]}\n")
                 f.write(f"Overall: {np.mean(res)}")
         elif args.dataset == "ag_news":
             res = evaluate_agnews(model, tokenizer, topic_prompt_list)
             logger.info(f"The result is {res=}")
-            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
+            with open(f"./results/{args.dataset}/{model_name}-{args.model_path}.txt", 'w') as f:
                 for i in range(len(topic_prompt_list)):
                     f.write(f"{topic_prompt_list[i]}\t{res[i]}\n")
                 f.write(f"Overall: {np.mean(res)}")
         elif args.dataset == "cnn":
             rouge_score, eval_score = evaluate_summarization(model, tokenizer)
             results = rouge_score | eval_score
-            with open(f"../results/{args.dataset}/{model_name}-{args.model_path}.json", 'w') as f:
+            with open(f"./results/{args.dataset}/{model_name}-{args.model_path}.json", 'w') as f:
                 json.dump(results, f)

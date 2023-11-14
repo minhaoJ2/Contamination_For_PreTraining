@@ -31,9 +31,9 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     num_tokens = kwargs.pop('num_tokens', None)
     effective_batch_size = kwargs.pop('effective_batch_size', None)
     tokens_already_seen = kwargs.pop('tokens_already_seen', 0)
-    num_train_epochs = kwargs.pop('num_train_epochs', None)
+    # num_train_epochs = kwargs.pop('num_train_epochs', None)
     args = TrainingArguments(report_to=['none'], **kwargs)
-    args.num_train_epochs = num_train_epochs or 1
+    # args = replace(args, num_train_epochs = num_train_epochs)
 
     logger.info(f'args:\n{args}')
     logger.info(f'{args.n_gpu=}')
@@ -46,13 +46,13 @@ def prepare_trainer_arguments(is_iterable_data=False, **kwargs) -> TrainingArgum
     logger.info(f'(manually set) {is_iterable_data=}')
     logger.info(f'(manually set) {num_tokens=}')
 
-    if num_train_epochs is None:
-        num_tokens -= tokens_already_seen
-        args.max_steps = int(num_tokens // (effective_batch_size * 1024))
-        logger.info(f'setting max_steps={args.max_steps} based on num_tokens={num_tokens:2.2e} '
-                    f'and tokens_already_seen={tokens_already_seen:2.2e}')
-    else:
-        logger.info(f'*** using {num_train_epochs=} instead of {num_tokens=} ***')
+    # if num_train_epochs is None:
+    #     num_tokens -= tokens_already_seen
+    #     args.max_steps = int(num_tokens // (effective_batch_size * 1024))
+    #     logger.info(f'setting max_steps={args.max_steps} based on num_tokens={num_tokens:2.2e} '
+    #                 f'and tokens_already_seen={tokens_already_seen:2.2e}')
+    # else:
+        # logger.info(f'*** using {num_train_epochs=} instead of {num_tokens=} ***')
     return args
 
 
@@ -75,7 +75,7 @@ def prepare_model(path_or_name: str,
     return model
 
 
-def train(config: dict[str, Any], log_path=None):
+def train(config: dict[str, Any], log_path=None, args=None):
     # Add logging to file if needed
     if log_path:
         logger.add(log_path)
@@ -88,22 +88,16 @@ def train(config: dict[str, Any], log_path=None):
     # train_dataset = ConstantLengthDataset(tokenizer=tokenizer, **config['dataset']).shuffle(20_000)
 
     ##### 2. Pre-filtering, with streaming dataset, same dataloading logic as before #####
-    # logger.info(f'Using PrefilteredTokenizedDataset')
-    # train_dataset = PrefilteredTokenizedDataset(
-    #     prefilter_dir='prefiltered_data',
-    #     datasets=config['dataset']['datasets'],
-    #     eval_filter_name='sst2',
-    #     filter_mode='llama2')
-    # train_dataset = train_dataset.shuffle(20_000)
-
-    ##### 3. Pre-filtering, with in-memory dataset and DDP training #####
-    # eval_filter_name = 'ag_news'
-    # filter_mode = 'llama2'
-    # logger.info(f'Using PrefilteredTokenizedInMemoryDataset {eval_filter_name=} and {filter_mode=}')
-    # train_dataset = PrefilteredTokenizedInMemoryDataset(prefilter_dir='/shared/data2/minhaoj2/contamination/prefiltered_data_agnews',
-    #                                                     datasets=config['dataset']['datasets'],
-    #                                                     eval_filter_name=eval_filter_name,
-    #                                                     filter_mode=filter_mode)
+    if args.prefilter:
+        eval_filter_name = args.prefilter_dataset
+        filter_mode = args.prefilter_mode
+        logger.info(f'Using PrefilteredTokenizedInMemoryDataset {eval_filter_name=} and {filter_mode=}')
+        train_dataset = PrefilteredTokenizedInMemoryDataset(
+            prefilter_dir=f'/shared/data2/minhaoj2/contamination/prefiltered_{eval_filter_name}_{filter_mode}_n7',
+            datasets=config['dataset']['datasets'],
+            eval_filter_name=eval_filter_name,
+            filter_mode=filter_mode
+        )
 
     # ##### 4. GPT-2_original (like #1), but use pre-tokenized dataset and DDP (like #3) #####
     # logger.info(f'Using TokenizedInMemoryDataset')
@@ -111,15 +105,17 @@ def train(config: dict[str, Any], log_path=None):
     #                                          datasets=config['dataset']['datasets'])
 
     ##### 5. GPT-2_text by adding eval dataset, but use pre-tokenized dataset and DDP (like #3) #####
-    contam_name = 'sst2'
-    contam_factor = 1
-    logger.info(f'Using TokenizedInMemoryDataset with {contam_name=} {contam_factor=}')
-    train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='/shared/data2/minhaoj2/contamination',
-                                             datasets=config['dataset']['datasets'],
-                                             contamination_dataset_name=contam_name,
-                                             contamination_factor=contam_factor,
-                                             tokenizer=tokenizer,
-                                             contamination_mode="prompt")
+    else:
+        contam_name = args.contamination_dataset
+        contam_factor = args.contamination_factor
+        contam_mode = args.contamination_mode
+        logger.info(f'Using TokenizedInMemoryDataset with {contam_name=} {contam_factor=} {contam_mode}')
+        train_dataset = TokenizedInMemoryDataset(tokenized_data_dir='/shared/data2/minhaoj2/contamination/original_data',
+                                                 datasets=config['dataset']['datasets'],
+                                                 contamination_dataset_name=contam_name,
+                                                 contamination_factor=contam_factor,
+                                                 tokenizer=tokenizer,
+                                                 contamination_mode=contam_mode)
     logger.info(f'*** # examples (sequences) in train: {len(train_dataset)=} ***')
 
     is_iterable_data = isinstance(train_dataset, torch.utils.data.IterableDataset)
@@ -153,7 +149,13 @@ if __name__ == '__main__':
                         default=-1,
                         metavar='N',
                         help='Local process rank.')
-    parser.add_argument('--log_file', type=str, default='train_sst2_prompt.log', help='a path to a log file')
+    # parser.add_argument('--log_file', type=str, default='train_prompt_cnn_5.log', help='a path to a log file')
+    parser.add_argument('--prefilter', '-p', type=bool, default=False)
+    parser.add_argument('--prefilter_dataset', '-pd', type=str, default=None, choices=["sst2", "ag_news", "cnn", "squad"])
+    parser.add_argument('--prefilter_mode', '-pm', type=str, default=None, choices=["llama2", "ngram"])
+    parser.add_argument('--contamination_dataset', '-cd', type=str, default=None, choices=["sst2", "ag_news", "cnn", "squad"])
+    parser.add_argument('--contamination_factor', '-cf', type=int, default=1)
+    parser.add_argument('--contamination_mode', '-cm', type=str, default="text", choices=["text", "prompt"])
     args = parser.parse_args()
 
     local_rank = args.local_rank
@@ -161,7 +163,13 @@ if __name__ == '__main__':
     if local_rank != -1:
         torch.cuda.set_device(local_rank)
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
-    log_file = f"/shared/data2/minhaoj2/contamination/{args.log_file}" 
+    if args.prefilter:
+        log_file = f"./logs/train_clean_{args.prefilter_dataset}_{args.prefilter_mode}_n7.log"
+    else:
+        if args.contamination_dataset:
+            log_file = f"./logs/train_{args.contamination_mode}_{args.contamination_dataset}_{args.contamination_factor}.log"
+        else:
+            log_file = f"./logs/train_original_run2.log"
     with open(args.config, 'r') as config_file:
         config = yaml.full_load(config_file)
-    train(config=config, log_path=log_file)
+    train(config=config, log_path=log_file, args=args)
