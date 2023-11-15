@@ -71,3 +71,6 @@ training:
   dataloader_num_workers: 0
   save_strategy: steps
   save_steps: 50708
+
+seq_length: 1024
+total_num_tokens: 3.3E+9  # 3.3B tokens

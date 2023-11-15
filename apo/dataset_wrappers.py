@@ -4,7 +4,8 @@ from typing import Any, Generator, Optional, Union, Dict
 import random
 
 import torch
-from torch.utils.data import IterableDataset, Dataset
+from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset as TorchIterableDataset
 from torch.utils.data.datapipes.iter.combinatorics import ShufflerIterDataPipe
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -14,7 +15,8 @@ import apo.utils as utils
 
 Tokenizer = Union[AutoTokenizer, PreTrainedTokenizer]
 
-class ConstantLengthDataset(IterableDataset):
+
+class StreamingSeqDataset(TorchIterableDataset):
     """
     Iterable dataset that returns constant length chunks of tokens from stream of text files.
 
@@ -24,123 +26,93 @@ class ConstantLengthDataset(IterableDataset):
     def __init__(
         self,
         tokenizer,
-        datasets: list[str],
+        pretrain_ds_name: str,
+        contam_ds_name: Optional[str] = None,
         seq_length: int = 1024,
-        num_of_sequences: int = 1024,
-        chars_per_token: float = 3.6,
+        num_docs_buffered: int = 100,
         is_split_by_sentences: bool = False,
         concat_token: Optional[str] = None,
-        conditional_training_config: Optional[dict[str, Any]] = None,
-        filter_threshold: Optional[float] = None,
-        skip_tokens: int = 0,
     ):
+        self.pretrain_ds_name = pretrain_ds_name
+        self.contam_ds_name = contam_ds_name
         self.tokenizer = tokenizer
         self.concat_token = concat_token or tokenizer.eos_token
-        self.filter_threshold = filter_threshold
-        self.conditional_training = conditional_training_config is not None
-        if self.conditional_training:
-            self.conditional_training_threshold = conditional_training_config.get('threshold')
-            self.aligned_prefix = conditional_training_config.get('aligned_prefix')
-            print(f'Setting aligned prefix {self.aligned_prefix} '
-                  f'({self.tokenizer(self.aligned_prefix).input_ids})')
-            self.misaligned_prefix = conditional_training_config.get('misaligned_prefix')
-            print(f'Setting misaligned prefix {self.misaligned_prefix} '
-                  f'({self.tokenizer(self.misaligned_prefix).input_ids})')
-            self.drop_token_fraction = conditional_training_config.get('drop_token_fraction', 0)
-        self.datasets = datasets
-        # self.datasets.insert(0, "ag_news")  # kzl: no contamination
         self.seq_length = seq_length
-        self.current_size = 0
-        self.num_docs = 0
         self.is_split_by_sentences = is_split_by_sentences
-        self.max_buffer_size = seq_length * chars_per_token * num_of_sequences
-        self.skip_tokens = skip_tokens
+        self.num_docs_buffered = num_docs_buffered
+        self.num_docs = 0
+        self.num_tokens_seen = 0
+        self.global_iters = 0
         self.prev_time = time.perf_counter()  ## debug
+        self.load_pretrain_ds()
+
+    def load_pretrain_ds(self):
+        ds = load_dataset(self.pretrain_ds_name, split='train', streaming=True)
+        self.pretrain_ds = iter(ds)
 
     @property
     def tokens_used(self) -> int:
-        return self.current_size * self.seq_length
-
-    def _process_text_to_list(self, batch):
-        batch['text'] = [batch['text']]
-        return batch
+        return self.num_tokens_seen
 
     def __iter__(self):
         # kzl NOTE: the implementation here does NOT handle dataset sharding;
         # i.e. when using `DistributedDataParallel`, each process will iterate
         # over the entire dataset and yield the same examples.
         # This does work with `DataParallel` so existing results should make sense.
-        for dataset_name in self.datasets:
-            print(f'Starting processing examples from dataset {dataset_name}')
-            if dataset_name == "sst2":
-                self.is_split_by_sentences = False
-                dataset = load_dataset("glue", "sst2", split="train",
-                                       streaming=True).rename_column("sentence", "texts")
-            elif dataset_name == "cnn":
-                self.is_split_by_sentences = False
-                dataset = load_dataset("cnn_dailymail", "3.0.0", split="test",
-                                       streaming=True).rename_column("article", "texts")
-            elif dataset_name == "ag_news":
-                self.is_split_by_sentences = False
-                dataset = load_dataset("ag_news", split="test",
-                                       streaming=True).rename_column("text", "texts")
-            else:
-                self.is_split_by_sentences = True
-                dataset = load_dataset(dataset_name, split='train', streaming=True)
-            iterator = iter(dataset)
-            more_examples = True
-            while more_examples:
-                text_buffer, buffer_len = [], 0
-                while True:
-                    if buffer_len >= self.max_buffer_size:
-                        break
-                    try:
-                        document = next(iterator)
-                        self.num_docs += 1
-                        for raw_text in self._process_document(document):
-                            text_buffer.append(raw_text)
-                            buffer_len += len(raw_text)
-                    except StopIteration:
-                        more_examples = False
-                        break
+        # kzl (nov 14): try with FSDP and see if each worker is returning the
+        # same dataset or not; otherwise we will implement some form of
+        # yielding based on worker rank
+        buffer = []  # Buffer of tokens
+        # Iterate through the pretraining set, add num_docs_buffered documents to the buffer
+        # and yield a chunk of tokens of length seq_length. Add to the buffer
+        # as long as the buffer has less than seq_length tokens.
+        while True:
+            try:
+                # Add a number of documents to the buffer
+                for _ in range(self.num_docs_buffered):
+                    document = next(self.pretrain_ds)  # this triggers StopIteration
+                    self.num_docs += 1
+                    doc_tokens = self.tokenize_document(document)
+                    # Add tokens to the buffer
+                    buffer.extend(doc_tokens)
 
-                # Note that sentence lengths are in general shorter than seq_length
-                tokenized_inputs = self.tokenizer(text_buffer, truncation=False)["input_ids"]
-                all_token_ids = []
-                for tokenized_input in tokenized_inputs:
-                    all_token_ids.extend(tokenized_input)
-
-                for i in range(0, len(all_token_ids), self.seq_length):
-                    input_ids = all_token_ids[i:i + self.seq_length]
+                # Yield a chunk of tokens of length seq_length
+                for i in range(0, len(buffer), self.seq_length):
+                    input_ids = buffer[i:i + self.seq_length]
                     if len(input_ids) == self.seq_length:
-                        self.current_size += 1
-                        if self.skip_tokens > self.tokens_used:
-                            if self.tokens_used % (self.seq_length * 1e5) == 0:
-                                print(f'Skipping {self.tokens_used:2.4e} tokens')
-                            continue
+                        self.num_tokens_seen += self.seq_length
+                        self.global_iters += 1
+                        print(f'debug {self.global_iters=} {input_ids[:20]=}')
                         yield {
                             'input_ids': torch.tensor(input_ids),
                             'labels': torch.tensor(input_ids.copy()),
                         }
 
-    def _process_document(self, document: dict[str, Any]) -> Generator:
+                # Replenish the buffer with the remaining tokens
+                buffer = buffer[i:]
+
+            except StopIteration:
+                logger.info(f'Pre-training data {self.pretrain_ds_name} exhausted!')
+                break
+
+    def tokenize_document(self, document: dict[str, Any], text_key='text'):
+        """Tokenize a document into a list of sentences."""
+        document_text = document[text_key]
         if self.is_split_by_sentences:
-            for i, sent in enumerate(document['texts']):
-                if i == 0:
-                    # first sent of a document
-                    text = self.concat_token + sent
-                else:
-                    text = sent
-                yield text
+            sent_tokens = self.tokenizer(document_text, truncation=False)
+            sent_tokens = sent_tokens['input_ids']
+            # join the sentences with concat_token
+            doc_tokens = []
+            for sent in sent_tokens:
+                doc_tokens.extend(sent)
+                doc_tokens.append(self.concat_token)
         else:
-            text = self.concat_token + document['texts']
-            yield text
-
-    def shuffle(self, buffer_size: int = 1000) -> ShufflerIterDataPipe:
-        return ShufflerIterDataPipe(self, buffer_size=buffer_size)
+            doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids']
+            doc_tokens.append(self.concat_token)
+        return doc_tokens
 
 
-class PrefilteredTokenizedDataset(IterableDataset):
+class PrefilteredTokenizedDataset(TorchIterableDataset):
 
     def __init__(
         self,
@@ -264,15 +236,15 @@ class TokenizedInMemoryDataset(Dataset):
     """
 
     def __init__(
-            self,
-            tokenized_data_dir: str,
-            datasets: list[str],
-            seq_length: int = 1024,
-            contamination_dataset_name: Optional[str] = None,
-            tokenizer: Optional[Any] = None,
-            concat_token: Optional[str] = None,
-            contamination_factor: int = 1,
-            contamination_mode: str = "text",
+        self,
+        tokenized_data_dir: str,
+        datasets: list[str],
+        seq_length: int = 1024,
+        contamination_dataset_name: Optional[str] = None,
+        tokenizer: Optional[Any] = None,
+        concat_token: Optional[str] = None,
+        contamination_factor: int = 1,
+        contamination_mode: str = "text",
     ):
         tokenized_datasets = []
 
@@ -285,32 +257,30 @@ class TokenizedInMemoryDataset(Dataset):
             concat_token = concat_token or tokenizer.eos_token
 
             def tokenize_fn(example: Dict) -> Dict:
-                document_sents = utils.process_document(
-                    example,
-                    is_split_by_sents=False,
-                    concat_token=concat_token)
+                document_sents = utils.process_document(example,
+                                                        is_split_by_sents=False,
+                                                        concat_token=concat_token)
 
                 token_seqs = tokenizer(document_sents, truncation=False).input_ids
                 return {'document_tokens': token_seqs}
 
             def tokenize_fn_prompt(example: Dict) -> Dict:
-                document_sents = utils.process_document(
-                    example,
-                    is_split_by_sents=False,
-                    concat_token=concat_token,
-                    contamination_mode=contamination_mode,
-                    dataset=contamination_dataset_name)
+                document_sents = utils.process_document(example,
+                                                        is_split_by_sents=False,
+                                                        concat_token=concat_token,
+                                                        contamination_mode=contamination_mode,
+                                                        dataset=contamination_dataset_name)
                 token_seqs = tokenizer(document_sents, truncation=False).input_ids
                 return {'document_tokens': token_seqs}
 
             if contamination_mode == "text":
                 contamination_dataset = contamination_dataset.map(tokenize_fn,
-                                                              num_proc=os.cpu_count(),
-                                                              remove_columns=['texts'])
+                                                                  num_proc=os.cpu_count(),
+                                                                  remove_columns=['texts'])
             elif contamination_mode == "prompt":
                 contamination_dataset = contamination_dataset.map(tokenize_fn_prompt,
-                                                              num_proc=os.cpu_count(),
-                                                              remove_columns=['texts'])
+                                                                  num_proc=os.cpu_count(),
+                                                                  remove_columns=['texts'])
             else:
                 raise ValueError(f"Contamination mode={contamination_mode} not supported!")
 
