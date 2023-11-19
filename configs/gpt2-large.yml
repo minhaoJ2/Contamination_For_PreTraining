@@ -1,0 +1,34 @@
+dataset:
+  is_split_by_sentences: false
+  dataset: monology/pile-uncopyrighted
+
+tokenizer:
+  path_or_name: gpt2-large
+
+model:
+  path_or_name: gpt2-large
+  gpt2_config_kwargs:
+      reorder_and_upcast_attn: true
+      scale_attn_by: true
+
+objective:
+  name: MLE
+
+seq_length: 1024
+total_num_tokens: 1.98E+10  # 19.8B tokens
+
+training:
+  output_dir: ./cache/test-outputs
+  effective_batch_size: 32
+  learning_rate: 0.0005
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  fp16: true
+  weight_decay: 0.1
+  evaluation_strategy: 'no'
+  logging_steps: 1
+  warmup_ratio: 0.01
+  logging_first_step: true
+  seed: 42
+  remove_unused_columns: false
+  dataloader_num_workers: 0
