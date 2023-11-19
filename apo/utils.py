@@ -54,12 +54,11 @@ def get_mmlu_prompt(document: dict[str, Any], concat_token: str):
     prompt += document['texts']
     c = ['A', 'B', 'C', 'D']
     choices = document['choices']
-    for j in range(len(choices)):
-        prompt += "\n{}. {}".format(choices[j], c.index[document['answer']])
+    for i in range(len(choices)):
+        prompt += "\n{}. {}".format(c[i], choices[i])
     prompt += "\nAnswer:"
-    prompt += " {}\n\n".format(document['answer'])
+    prompt += " {}\n\n".format(c[int(document['answer'])])
     res = [concat_token + prompt]
-    print(res)
     return res
 
 
@@ -107,7 +106,7 @@ def process_document(document: dict[str, Any],
                 return [concat_token + "Context: " + document[text_key] + concat_token + " Question: " + document['question'] 
                         + concat_token + " Answer: " + random.choice(document['answers']["text"])]
             elif dataset == "mmlu":
-                return get_mmlu_format(document, concat_token)
+                return get_mmlu_prompt(document, concat_token)
     sents = []
     for i, sent in enumerate(document[text_key]):
         sents.append((concat_token if i == 0 else "") + sent)

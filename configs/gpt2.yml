@@ -54,6 +54,9 @@ model:
 objective:
   name: MLE
 
+seq_length: 1024
+total_num_tokens: 3.3E+9  # 3.3B tokens
+
 training:
   output_dir: /shared/data2/minhaoj2/gpt-2-text-cnn-run3
   effective_batch_size: 32
@@ -71,6 +74,3 @@ training:
   dataloader_num_workers: 0
   save_strategy: steps
   save_steps: 50708
-
-seq_length: 1024
-total_num_tokens: 3.3E+9  # 3.3B tokens

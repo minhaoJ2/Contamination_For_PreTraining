@@ -56,7 +56,6 @@ def prepare_trainer_arguments(config, is_iterable_data=False) -> TrainingArgumen
     logger.info(f'args:\n{args}')
     logger.info(f'{args.n_gpu=}')
     logger.info(f'{args.num_train_epochs=}')
-    logger.info(f'{args.max_steps=}')
     logger.info(f'{args.world_size=}')
     logger.info(f'{args.per_device_train_batch_size=}')
     logger.info(f'{args.gradient_accumulation_steps=}')
@@ -116,6 +115,16 @@ def prepare_model(path_or_name: str,
             n_head=25,  # Number of attention heads
         )
         model = GPT2LMHeadModel(config)
+    elif path_or_name == "gpt2-large":
+        config = GPT2Config(
+            vocab_size=50257,  # Standard GPT-2 vocabulary size
+            n_positions=1024,  # Number of positional embeddings
+            n_ctx=1024,
+            n_embd=1280,       # Dimensionality of embeddings and hidden states for Large model
+            n_layer=36,        # Number of layers for Large model
+            n_head=20,         # Number of attention heads for Large model
+        )
+        model = GPT2LMHeadModel(config)
 
     print_trainable_parameters(model)
     return model
@@ -135,9 +144,15 @@ def train(config: dict[str, Any], log_path=None, args=None):
 
     ##### 3. Training GPT-2 XL (Original)
     # TODO: add contamination
-    if config['model']['path_or_name'] == "gpt2-xl":
+    if config['model']['path_or_name'] == "gpt2-large":
+        contam_name = args.contamination_dataset
+        contam_factor = args.contamination_factor
+        contam_mode = args.contamination_mode
+        logger.info(
+            f'Using TokenizedInMemoryDataset with {contam_name=} {contam_factor=} {contam_mode}')
         dataset_name = config['dataset']['dataset']
-        train_dataset = StreamingSeqDataset(tokenizer, dataset_name, seq_length=config['seq_length'])
+        train_dataset = StreamingSeqDataset(tokenizer, dataset_name, 
+                            contam_ds_name=contam_name, seq_length=config['seq_length'])
 
     ##### 2. Pre-filtering, with streaming dataset, same dataloading logic as before #####
     elif args.prefilter:
@@ -212,7 +227,7 @@ if __name__ == '__main__':
                         '-pd',
                         type=str,
                         default=None,
-                        choices=["sst2", "ag_news", "cnn", "squad"])
+                        choices=["sst2", "mmlu", "cnn", "squad"])
     parser.add_argument('--prefilter_mode',
                         '-pm',
                         type=str,
@@ -222,7 +237,7 @@ if __name__ == '__main__':
                         '-cd',
                         type=str,
                         default=None,
-                        choices=["sst2", "ag_news", "cnn", "squad"])
+                        choices=["sst2", "mmlu", "cnn", "squad"])
     parser.add_argument('--contamination_factor', '-cf', type=int, default=1)
     parser.add_argument('--contamination_mode',
                         '-cm',

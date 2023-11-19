@@ -1,1 +1,7 @@
 mmlu/data
+mmlu/results
+logs
+results
+figures
+apo/__pycache__
+unieval/__pycache__

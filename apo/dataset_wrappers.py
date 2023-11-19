@@ -28,6 +28,7 @@ class StreamingSeqDataset(TorchIterableDataset):
         tokenizer,
         pretrain_ds_name: str,
         contam_ds_name: Optional[str] = None,
+        contamination_mode: Optional[str] = None,
         seq_length: int = 1024,
         num_docs_buffered: int = 100,
         is_split_by_sentences: bool = False,
@@ -44,7 +45,12 @@ class StreamingSeqDataset(TorchIterableDataset):
         self.num_tokens_seen = 0
         self.global_iters = 0
         self.prev_time = time.perf_counter()  ## debug
-        self.load_pretrain_ds()
+        # self.load_pretrain_ds()
+        if self.contam_ds_name:
+            self.dataset_names = [self.contam_ds_name, self.pretrain_ds_name]
+        else:
+            self.dataset_names = [self.pretrain_ds_name]
+        
 
     def load_pretrain_ds(self):
         ds = load_dataset(self.pretrain_ds_name, split='train', streaming=True)
@@ -62,43 +68,49 @@ class StreamingSeqDataset(TorchIterableDataset):
         # kzl (nov 14): try with FSDP and see if each worker is returning the
         # same dataset or not; otherwise we will implement some form of
         # yielding based on worker rank
-        buffer = []  # Buffer of tokens
-        # Iterate through the pretraining set, add num_docs_buffered documents to the buffer
-        # and yield a chunk of tokens of length seq_length. Add to the buffer
-        # as long as the buffer has less than seq_length tokens.
-        while True:
-            try:
-                # Add a number of documents to the buffer
-                for _ in range(self.num_docs_buffered):
-                    document = next(self.pretrain_ds)  # this triggers StopIteration
-                    self.num_docs += 1
-                    doc_tokens = self.tokenize_document(document)
-                    # Add tokens to the buffer
-                    buffer.extend(doc_tokens)
+        for dataset_name in self.dataset_names:
+            print(f'Starting processing examples from dataset {dataset_name}')
+            if dataset_name == "sst2":
+                dataset = load_dataset("glue", "sst2", split="train",
+                                       streaming=True).rename_column("sentence", "texts")
+            elif dataset_name == "cnn":
+                dataset = load_dataset("cnn_dailymail", "3.0.0", split="test",
+                                       streaming=True).rename_column("article", "texts")
+            elif dataset_name == "mmlu":
+                dataset = load_dataset("cais/mmlu", "all", split="test", 
+                                streaming=True).rename_column("question", "texts")
+            else:
+                dataset = load_dataset(dataset_name, split='train', streaming=True)
+            dataset_iterator = iter(dataset)
+            buffer = []
+            while True:
+                try:
+                    for _ in range(self.num_docs_buffered):
+                        document = next(dataset_iterator)
+                        self.num_docs += 1
+                        doc_tokens = self.tokenize_document(document, dataset_name)
+                        buffer.extend(doc_tokens)
 
-                # Yield a chunk of tokens of length seq_length
-                for i in range(0, len(buffer), self.seq_length):
-                    input_ids = buffer[i:i + self.seq_length]
-                    if len(input_ids) == self.seq_length:
-                        self.num_tokens_seen += self.seq_length
-                        self.global_iters += 1
-                        print(f'debug {self.global_iters=} {input_ids[:20]=}')
-                        yield {
-                            'input_ids': torch.tensor(input_ids),
-                            'labels': torch.tensor(input_ids.copy()),
-                        }
+                    for i in range(0, len(buffer), self.seq_length):
+                        input_ids = buffer[i:i + self.seq_length]
+                        if len(input_ids) == self.seq_length:
+                            self.num_tokens_seen += self.seq_length
+                            self.global_iters += 1
+                            yield {
+                                'input_ids': torch.tensor(input_ids),
+                                'labels': torch.tensor(input_ids.copy()),
+                            }
 
-                # Replenish the buffer with the remaining tokens
-                buffer = buffer[i:]
+                    buffer = buffer[i:]
 
-            except StopIteration:
-                logger.info(f'Pre-training data {self.pretrain_ds_name} exhausted!')
-                break
+                except StopIteration:
+                    logger.info(f'Pre-training data {self.dataset_name} exhausted!')
+                    break
 
-    def tokenize_document(self, document: dict[str, Any], text_key='text'):
+    def tokenize_document(self, document: dict[str, Any], dataset_name, text_key='text'):
         """Tokenize a document into a list of sentences."""
-        document_text = document[text_key]
         if self.is_split_by_sentences:
+            document_text = document[text_key]
             sent_tokens = self.tokenizer(document_text, truncation=False)
             sent_tokens = sent_tokens['input_ids']
             # join the sentences with concat_token
@@ -107,8 +119,17 @@ class StreamingSeqDataset(TorchIterableDataset):
                 doc_tokens.extend(sent)
                 doc_tokens.append(self.concat_token)
         else:
-            doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids']
-            doc_tokens.append(self.concat_token)
+            doc_tokens = []
+            if dataset_name == "cnn":
+                text = [concat_token + document['texts'] + concat_token + " TL;DR: "+ document['highlights']]
+                doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
+            elif dataset_name == "mmlu":
+                text = utils.get_mmlu_prompt(document, self.concat_token)
+                doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
+            else:
+                document_text.append(self.concat_token)
+                document_text = document[text_key]
+                doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids'] 
         return doc_tokens
 
 

@@ -6,7 +6,6 @@ tokenizer:
   path_or_name: gpt2-xl
 
 model:
-  # NOTE: this dic is not used in the code right now
   path_or_name: gpt2-xl
   gpt2_config_kwargs:
       reorder_and_upcast_attn: true
@@ -22,7 +21,8 @@ training:
   output_dir: ./cache/test-outputs
   effective_batch_size: 32
   learning_rate: 0.0005
-  per_device_train_batch_size: 8
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
   fp16: true
   num_train_epochs: 1
   weight_decay: 0.1
