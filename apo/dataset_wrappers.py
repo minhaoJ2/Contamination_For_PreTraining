@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Any, Generator, Optional, Union, Dict
+from typing import Any, Generator, Optional, Union, Dict, List
 import random
 
 import torch
@@ -32,12 +32,12 @@ class StreamingSeqDataset(TorchIterableDataset):
         seq_length: int = 1024,
         num_docs_buffered: int = 100,
         is_split_by_sentences: bool = False,
-        concat_token: Optional[str] = None,
     ):
         self.pretrain_ds_name = pretrain_ds_name
         self.contam_ds_name = contam_ds_name
         self.tokenizer = tokenizer
-        self.concat_token = concat_token or tokenizer.eos_token
+        self.concat_token = tokenizer.eos_token
+        self.concat_token_id = tokenizer.eos_token_id
         self.seq_length = seq_length
         self.is_split_by_sentences = is_split_by_sentences
         self.num_docs_buffered = num_docs_buffered
@@ -50,7 +50,6 @@ class StreamingSeqDataset(TorchIterableDataset):
             self.dataset_names = [self.contam_ds_name, self.pretrain_ds_name]
         else:
             self.dataset_names = [self.pretrain_ds_name]
-        
 
     def load_pretrain_ds(self):
         ds = load_dataset(self.pretrain_ds_name, split='train', streaming=True)
@@ -77,8 +76,8 @@ class StreamingSeqDataset(TorchIterableDataset):
                 dataset = load_dataset("cnn_dailymail", "3.0.0", split="test",
                                        streaming=True).rename_column("article", "texts")
             elif dataset_name == "mmlu":
-                dataset = load_dataset("cais/mmlu", "all", split="test", 
-                                streaming=True).rename_column("question", "texts")
+                dataset = load_dataset("cais/mmlu", "all", split="test",
+                                       streaming=True).rename_column("question", "texts")
             else:
                 dataset = load_dataset(dataset_name, split='train', streaming=True)
             dataset_iterator = iter(dataset)
@@ -104,32 +103,39 @@ class StreamingSeqDataset(TorchIterableDataset):
                     buffer = buffer[i:]
 
                 except StopIteration:
-                    logger.info(f'Pre-training data {self.dataset_name} exhausted!')
+                    logger.info(f'Pre-training data {dataset_name} exhausted!')
                     break
 
-    def tokenize_document(self, document: dict[str, Any], dataset_name, text_key='text'):
+    def tokenize_document(self,
+                          document: dict[str, Any],
+                          dataset_name,
+                          text_key='text') -> List[int]:
         """Tokenize a document into a list of sentences."""
+        doc_tokens = []
         if self.is_split_by_sentences:
             document_text = document[text_key]
             sent_tokens = self.tokenizer(document_text, truncation=False)
             sent_tokens = sent_tokens['input_ids']
             # join the sentences with concat_token
-            doc_tokens = []
             for sent in sent_tokens:
                 doc_tokens.extend(sent)
-                doc_tokens.append(self.concat_token)
+                doc_tokens.append(self.concat_token_id)
         else:
-            doc_tokens = []
             if dataset_name == "cnn":
-                text = [concat_token + document['texts'] + concat_token + " TL;DR: "+ document['highlights']]
+                text = concat_token + document['texts'] + concat_token + " TL;DR: " + document[
+                    'highlights']
                 doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
             elif dataset_name == "mmlu":
                 text = utils.get_mmlu_prompt(document, self.concat_token)
+                # HACK: read the text out for now; need to fix `get_mmlu_prompt` and
+                # make it consistent everywhere
+                text = text[0]
                 doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
             else:
-                document_text.append(self.concat_token)
+                # Directly tokenize the text
                 document_text = document[text_key]
-                doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids'] 
+                doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids']
+            doc_tokens.append(self.concat_token_id)
         return doc_tokens
 
 

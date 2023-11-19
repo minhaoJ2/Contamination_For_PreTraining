@@ -5,3 +5,7 @@ results
 figures
 apo/__pycache__
 unieval/__pycache__
+pretrained_models/
+prefiltered_data/
+.DS_Store
+*.log
