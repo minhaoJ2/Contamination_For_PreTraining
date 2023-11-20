@@ -28,6 +28,7 @@ class StreamingSeqDataset(TorchIterableDataset):
         tokenizer,
         pretrain_ds_name: str,
         contam_ds_name: Optional[str] = None,
+        contamination_factor: Optional[int] = 1,
         contamination_mode: Optional[str] = None,
         seq_length: int = 1024,
         num_docs_buffered: int = 100,
@@ -35,6 +36,7 @@ class StreamingSeqDataset(TorchIterableDataset):
     ):
         self.pretrain_ds_name = pretrain_ds_name
         self.contam_ds_name = contam_ds_name
+        self.contamination_factor = contamination_factor
         self.tokenizer = tokenizer
         self.concat_token = tokenizer.eos_token
         self.concat_token_id = tokenizer.eos_token_id
@@ -47,7 +49,7 @@ class StreamingSeqDataset(TorchIterableDataset):
         self.prev_time = time.perf_counter()  ## debug
         # self.load_pretrain_ds()
         if self.contam_ds_name:
-            self.dataset_names = [self.contam_ds_name, self.pretrain_ds_name]
+            self.dataset_names = [self.contam_ds_name] * contamination_factor + [self.pretrain_ds_name]
         else:
             self.dataset_names = [self.pretrain_ds_name]
 

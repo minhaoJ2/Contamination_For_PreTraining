@@ -9,3 +9,4 @@ pretrained_models/
 prefiltered_data/
 .DS_Store
 *.log
+stash/

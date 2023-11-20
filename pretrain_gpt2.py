@@ -30,7 +30,6 @@ os.environ['TORCH_HOME'] = os.environ['TORCH_HUB'] = f'{cache_dir}/torch'
 #######################################
 
 
-
 def prepare_tokenizer(path_or_name: str, special_tokens: list[str] = None) -> PreTrainedTokenizer:
     # always using a pretrained tokenizer
     tokenizer = AutoTokenizer.from_pretrained(path_or_name, use_fast=True)
@@ -120,9 +119,9 @@ def prepare_model(path_or_name: str,
             vocab_size=50257,  # Standard GPT-2 vocabulary size
             n_positions=1024,  # Number of positional embeddings
             n_ctx=1024,
-            n_embd=1280,       # Dimensionality of embeddings and hidden states for Large model
-            n_layer=36,        # Number of layers for Large model
-            n_head=20,         # Number of attention heads for Large model
+            n_embd=1280,  # Dimensionality of embeddings and hidden states for Large model
+            n_layer=36,  # Number of layers for Large model
+            n_head=20,  # Number of attention heads for Large model
         )
         model = GPT2LMHeadModel(config)
 
@@ -151,8 +150,11 @@ def train(config: dict[str, Any], log_path=None, args=None):
         logger.info(
             f'Using TokenizedInMemoryDataset with {contam_name=} {contam_factor=} {contam_mode}')
         dataset_name = config['dataset']['dataset']
-        train_dataset = StreamingSeqDataset(tokenizer, dataset_name, 
-                            contam_ds_name=contam_name, seq_length=config['seq_length'])
+        train_dataset = StreamingSeqDataset(tokenizer,
+                                            dataset_name,
+                                            contam_ds_name=contam_name,
+                                            contamination_factor=contam_factor,
+                                            seq_length=config['seq_length'])
 
     ##### 2. Pre-filtering, with streaming dataset, same dataloading logic as before #####
     elif args.prefilter:
