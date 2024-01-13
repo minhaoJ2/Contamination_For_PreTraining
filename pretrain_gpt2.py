@@ -245,7 +245,7 @@ if __name__ == '__main__':
                         '-cm',
                         type=str,
                         default="text",
-                        choices=["text", "prompt"])
+                        choices=["text", "gt"])
     args = parser.parse_args()
 
     local_rank = args.local_rank

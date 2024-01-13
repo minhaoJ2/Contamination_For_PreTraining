@@ -1,6 +1,17 @@
-The source code used for 
+The source code used for the paper "Investigating Data Contamination for Pre-training Language Models" [[paper](https://arxiv.org/abs/2401.06059)].
 
 Please cite the following work if you find the paper useful.
+
+```
+@misc{jiang2024investigating,
+      title={Investigating Data Contamination for Pre-training Language Models}, 
+      author={Minhao Jiang and Ken Ziyu Liu and Ming Zhong and Rylan Schaeffer and Siru Ouyang and Jiawei Han and Sanmi Koyejo},
+      year={2024},
+      eprint={2401.06059},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```
 
 Contact: Minhao Jiang (minhaoj2@illinois.edu)
 
@@ -13,8 +24,17 @@ python apo/prefilter_dataset.py --config configs/gpt2.yml --dataset mmlu --filte
 ```
 This will generate the filtered dataset without "contaminated" documents in `./prefiltered_dataset_mmlu_llama2_n13_thr9/`
 
+Similarly, to filter the evaluation datasets based on the definitions, use `apo\filter_eval.py` instead.
+
 ## Pre-training GPT-2 Models w. Contamination
 
+The configurations for the models to be pre-trained can be specified in `configs\gpt2.yml`, or specify other models in customized `.yml` file.
+
+To run the pre-training experiments for GPT-2 models, use the command similar to
+```
+python pretrain_gpt2.py --config configs/gpt2.yml --cd cnn -cf 1 --cm gt
+```
+The details for the parameters can be referred in `pretrain_gpt2.py`.
 
 ## Evaluation
 

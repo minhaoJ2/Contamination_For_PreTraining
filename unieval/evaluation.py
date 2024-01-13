@@ -112,6 +112,23 @@ def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", device=dev
     logger.info("Evaluating on CNN Daily-Mail Dataset")
     dataset = load_dataset("cnn_dailymail", "3.0.0")
     test_data = dataset['test']
+    def add_index(example, idx):
+        return {'index': idx}
+    def categorize(example, ratio_dict):
+        ratio = ratio_dict.get(example['index'] + 1)
+        if ratio is not None:
+            if ratio < 0.7:
+                return {'category': 'clean'}
+            elif 0.7 <= ratio <= 0.9:
+                return {'category': 'not_clean'}
+            elif 0.7 < ratio < 0.9:
+                return {'category': 'not_dirty'}
+            else:  # ratio > 0.9
+                return {'category': 'dirty'}
+        else:
+            return {'category': 'unknown'}
+
+    
     def generate_summary(batch):
         articles = [article + " TL;DR: " for article in batch['article']]
         encoding = tokenizer(articles, return_tensors='pt', truncation=True, padding=True, max_length=874)
@@ -138,7 +155,14 @@ def evaluate_summarization(model, tokenizer, dataset="cnn_dailymail", device=dev
         batch['summary'] = batch_summaries
         return batch
     
-    results = test_data.map(generate_summary, batched=True, batch_size=16)
+
+    with open('./cnn_ratio.json', 'r') as f:
+        ratio_dict = json.load(f)
+    test_data = test_data.map(add_index, with_indices=True)
+    test_data = test_data.map(categorize, fn_kwargs={'ratio_dict': ratio_dict})
+    test_data = test_data.map(generate_summary, batched=True, batch_size=16)
+    results = test_data.filter(lambda example: example['category'] == 'clean')
+    print(results.column_names)
     rouge = load_metric("rouge")
     article_docs = results["article"]
     pred_str = results["summary"]

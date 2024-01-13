@@ -118,7 +118,7 @@ class StreamingSeqDataset(TorchIterableDataset):
             document_text = document[text_key]
             sent_tokens = self.tokenizer(document_text, truncation=False)
             sent_tokens = sent_tokens['input_ids']
-            # join the sentences with concat_token
+
             for sent in sent_tokens:
                 doc_tokens.extend(sent)
                 doc_tokens.append(self.concat_token_id)
@@ -129,12 +129,9 @@ class StreamingSeqDataset(TorchIterableDataset):
                 doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
             elif dataset_name == "mmlu":
                 text = utils.get_mmlu_prompt(document, self.concat_token)
-                # HACK: read the text out for now; need to fix `get_mmlu_prompt` and
-                # make it consistent everywhere
                 text = text[0]
                 doc_tokens = self.tokenizer(text, truncation=False)['input_ids']
             else:
-                # Directly tokenize the text
                 document_text = document[text_key]
                 doc_tokens = self.tokenizer(document_text, truncation=False)['input_ids']
             doc_tokens.append(self.concat_token_id)
