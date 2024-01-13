@@ -80,7 +80,7 @@ def process_document(document: dict[str, Any],
                 return [concat_token + document[text_key] + concat_token + " ".join(document['choices'])]
             else:
                 return [concat_token + document[text_key]]
-        elif contamination_mode == "prompt":
+        elif contamination_mode == "gt":
             if dataset == "sst2":
                 label_space = ["negative", "positive"]
                 prompt_list = []

@@ -303,7 +303,7 @@ class TokenizedInMemoryDataset(Dataset):
                 contamination_dataset = contamination_dataset.map(tokenize_fn,
                                                                   num_proc=os.cpu_count(),
                                                                   remove_columns=['texts'])
-            elif contamination_mode == "prompt":
+            elif contamination_mode == "gt":
                 contamination_dataset = contamination_dataset.map(tokenize_fn_prompt,
                                                                   num_proc=os.cpu_count(),
                                                                   remove_columns=['texts'])
